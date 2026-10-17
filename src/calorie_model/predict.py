@@ -8,9 +8,7 @@ import argparse
 import json
 from pathlib import Path
 
-import numpy as np
-
-from .data import load_image
+from .data import load_rgb_uint8
 from .model import TARGETS
 
 UNITS = {"calories": "kcal", "mass": "g", "fat": "g", "carb": "g", "protein": "g"}
@@ -20,10 +18,10 @@ def predict(model_path: str | Path, image_path: str | Path) -> dict[str, float]:
     import onnxruntime as ort
 
     sess = ort.InferenceSession(str(model_path), providers=["CPUExecutionProvider"])
-    _, _, h, w = sess.get_inputs()[0].shape
+    _, h, w, _ = sess.get_inputs()[0].shape  # NHWC
     if not isinstance(h, int) or h != w:
         raise ValueError(f"expected a square static input size, got {(h, w)}")
-    x = load_image(image_path, h).unsqueeze(0).numpy().astype(np.float32)
+    x = load_rgb_uint8(image_path, h)[None]
     out = sess.run(None, {"image": x})[0][0]
     return {name: round(float(v), 1) for name, v in zip(TARGETS, out)}
 

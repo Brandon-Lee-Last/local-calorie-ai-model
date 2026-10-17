@@ -3,9 +3,14 @@
     python -m calorie_model.export runs/default/best.pt --out build/nutrition.onnx
     python -m calorie_model.export runs/default/best.pt --out build/nutrition.onnx --quantize --calib-dir data/nutrition5k/imagery
 
-The exported graph takes ``image`` float32 ``(N, 3, S, S)`` with RGB in [0, 1]
-(normalisation is inside the graph) and returns ``nutrition`` ``(N, 5)`` in real
-units, ordered as ``calorie_model.TARGETS`` (kcal, g, g, g, g).
+App-facing contract (shared with the TFLite export):
+
+    input   "image"      uint8   (N, S, S, 3)  RGB, NHWC, raw 0-255 pixels
+    output  "nutrition"  float32 (N, 5)        kcal, g mass, g fat, g carb, g protein
+                                               (order: calorie_model.TARGETS)
+
+Scaling to [0, 1], ImageNet normalisation and the NHWC->NCHW transpose all
+happen inside the graph, so the app only resizes to S x S and hands over bytes.
 """
 from __future__ import annotations
 
@@ -16,12 +21,12 @@ import numpy as np
 import torch
 from torch import nn
 
-from .data import load_image
+from .data import load_rgb_uint8
 from .model import TARGETS, NutritionNet, scale_vector
 
 
 class DeployModel(nn.Module):
-    """Wraps the trained net so the exported graph emits kcal/grams directly."""
+    """Wraps the trained net with the app-facing input/output contract."""
 
     def __init__(self, net: NutritionNet) -> None:
         super().__init__()
@@ -29,7 +34,8 @@ class DeployModel(nn.Module):
         self.register_buffer("scale", scale_vector(), persistent=False)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        return self.net(image) * self.scale
+        x = image.permute(0, 3, 1, 2).float() / 255.0
+        return self.net(x) * self.scale
 
 
 def load_checkpoint(path: str | Path) -> tuple[NutritionNet, int]:
@@ -39,12 +45,20 @@ def load_checkpoint(path: str | Path) -> tuple[NutritionNet, int]:
     return net.eval(), ckpt["img_size"]
 
 
+def deploy_model(model: nn.Module) -> nn.Module:
+    return (DeployModel(model) if isinstance(model, NutritionNet) else model).eval()
+
+
+def random_pixels(n: int, img_size: int, seed: int = 0) -> np.ndarray:
+    rng = np.random.default_rng(seed)
+    return rng.integers(0, 256, size=(n, img_size, img_size, 3), dtype=np.uint8)
+
+
 def export_onnx(model: nn.Module, img_size: int, out: Path, opset: int = 17) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
-    model = DeployModel(model).eval() if isinstance(model, NutritionNet) else model.eval()
-    dummy = torch.rand(1, 3, img_size, img_size)
+    dummy = torch.from_numpy(random_pixels(1, img_size))
     torch.onnx.export(
-        model,
+        deploy_model(model),
         dummy,
         str(out),
         input_names=["image"],
@@ -59,30 +73,57 @@ def check_parity(model: nn.Module, onnx_path: Path, img_size: int, atol: float =
     """Max abs difference (real units) between PyTorch and ONNX Runtime outputs."""
     import onnxruntime as ort
 
-    model = DeployModel(model).eval() if isinstance(model, NutritionNet) else model.eval()
-    x = torch.rand(2, 3, img_size, img_size)
+    pixels = random_pixels(2, img_size, seed=1)
     with torch.no_grad():
-        expected = model(x).numpy()
+        expected = deploy_model(model)(torch.from_numpy(pixels)).numpy()
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
-    got = sess.run(None, {"image": x.numpy()})[0]
+    got = sess.run(None, {"image": pixels})[0]
     diff = float(np.abs(expected - got).max())
     if diff > atol:
         raise AssertionError(f"ONNX output differs from PyTorch by {diff:.4f} (> {atol})")
     return diff
 
 
+def remove_identities(src: Path, dst: Path) -> None:
+    """Rewrite an ONNX file with every non-output Identity node bypassed."""
+    import onnx
+
+    model = onnx.load(str(src))
+    outputs = {o.name for o in model.graph.output}
+    bypass = {n.output[0]: n.input[0] for n in model.graph.node if n.op_type == "Identity" and n.output[0] not in outputs}
+
+    def resolve(name: str) -> str:
+        while name in bypass:
+            name = bypass[name]
+        return name
+
+    kept = [n for n in model.graph.node if not (n.op_type == "Identity" and n.output[0] in bypass)]
+    for node in kept:
+        for i, name in enumerate(node.input):
+            node.input[i] = resolve(name)
+    del model.graph.node[:]
+    model.graph.node.extend(kept)
+    onnx.save(model, str(dst))
+
+
 def quantize_int8(src: Path, dst: Path, img_size: int, calib_dir: Path | None, n_calib: int = 100) -> None:
     """Static int8 (QDQ) quantisation. Re-measure accuracy afterwards; it is not free."""
     from onnxruntime.quantization import CalibrationDataReader, QuantFormat, QuantType, quantize_static
+
+    # The exporter routes most conv biases through Identity nodes; the quantiser only
+    # quantises biases that are initializers, so strip them first.
+    prepped = dst.with_name(dst.stem + ".prep.onnx")
+    remove_identities(src, prepped)
+    src = prepped
 
     if calib_dir is not None:
         paths = sorted(p for ext in ("*.png", "*.jpg", "*.jpeg") for p in calib_dir.rglob(ext))[:n_calib]
         if not paths:
             raise FileNotFoundError(f"no images found under {calib_dir}")
-        batches = [load_image(p, img_size).unsqueeze(0).numpy() for p in paths]
+        batches = [load_rgb_uint8(p, img_size)[None] for p in paths]
     else:
         print("WARNING: calibrating on random noise; pass --calib-dir with real food photos.")
-        batches = [np.random.rand(1, 3, img_size, img_size).astype(np.float32) for _ in range(16)]
+        batches = list(random_pixels(16, img_size)[:, None])
 
     class Reader(CalibrationDataReader):
         def __init__(self) -> None:
@@ -100,6 +141,7 @@ def quantize_int8(src: Path, dst: Path, img_size: int, calib_dir: Path | None, n
         weight_type=QuantType.QInt8,
         per_channel=True,
     )
+    prepped.unlink(missing_ok=True)
 
 
 def main(argv: list[str] | None = None) -> None:

@@ -5,6 +5,7 @@ import csv
 import random
 from pathlib import Path
 
+import numpy as np
 import torch
 from PIL import Image
 from torch.utils.data import Dataset
@@ -35,10 +36,15 @@ def train_transform(img_size: int) -> T.Compose:
     )
 
 
-def load_image(path: str | Path, img_size: int) -> torch.Tensor:
-    """Load one image as a ``(3, img_size, img_size)`` float tensor in [0, 1]."""
+def load_rgb_uint8(path: str | Path, img_size: int) -> np.ndarray:
+    """Load one image as a ``(img_size, img_size, 3)`` uint8 RGB array.
+
+    This is the exact input contract of the exported model (minus the batch
+    axis) and uses the same resize as ``eval_transform``.
+    """
     with Image.open(path) as im:
-        return eval_transform(img_size)(im.convert("RGB"))
+        resized = T.Resize((img_size, img_size))(im.convert("RGB"))
+    return np.asarray(resized, dtype=np.uint8)
 
 
 class Nutrition5kDataset(Dataset):
@@ -63,16 +69,33 @@ class Nutrition5kDataset(Dataset):
         self.transform = train_transform(img_size) if train else eval_transform(img_size)
 
         labels = self._read_labels()
-        ids_file = self.root / "dish_ids" / "splits" / f"rgb_{split}_ids.txt"
-        ids = [line.strip() for line in ids_file.read_text().splitlines() if line.strip()]
+        ids = self._read_split_ids(split)
         self.samples = []
         for dish_id in ids:
             img = self.root / "imagery" / "realsense_overhead" / dish_id / "rgb.png"
-            # A few dishes have labels but no overhead image (or vice versa); skip them.
+            # Overhead RGB-D images are only included "when available", so skip gaps.
             if dish_id in labels and img.exists():
                 self.samples.append((img, labels[dish_id]))
         if not self.samples:
-            raise RuntimeError(f"no usable samples found under {self.root} for split {split!r}")
+            raise RuntimeError(
+                f"no usable samples under {self.root} for split {split!r}: "
+                f"{len(ids)} ids in split file, {len(labels)} labelled dishes, "
+                f"{sum((self.root / 'imagery' / 'realsense_overhead' / i / 'rgb.png').exists() for i in ids)} "
+                "with an rgb.png. Check the dataset layout."
+            )
+
+    def _read_split_ids(self, split: str) -> list[str]:
+        # The split filenames are not documented in the dataset README, so accept
+        # the expected name, else a single unambiguous ``rgb_<split>*.txt``.
+        splits_dir = self.root / "dish_ids" / "splits"
+        exact = splits_dir / f"rgb_{split}_ids.txt"
+        matches = [exact] if exact.exists() else sorted(splits_dir.glob(f"rgb_{split}*.txt"))
+        if len(matches) != 1:
+            found = sorted(p.name for p in splits_dir.glob("*")) if splits_dir.exists() else []
+            raise FileNotFoundError(
+                f"expected exactly one rgb_{split}*.txt in {splits_dir}; found files: {found}"
+            )
+        return [line.strip() for line in matches[0].read_text().splitlines() if line.strip()]
 
     def _read_labels(self) -> dict[str, torch.Tensor]:
         # CSV column order is calories, mass, fat, carb, protein == TARGETS order.
