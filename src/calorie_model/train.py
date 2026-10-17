@@ -4,6 +4,9 @@
     python -m calorie_model.train --data-root data/nutrition5k --epochs 30
     python -m calorie_model.train --synthetic --epochs 2 --no-pretrained   # smoke test, no data needed
 
+All images are decoded once into memory on the training device and augmented there
+(see ``batches.py``), so there are no DataLoader worker processes.
+
 The best epoch is chosen on a validation split carved out of the training dishes.
 The official test split is evaluated once, at the end, next to a trivial baseline
 (always predict the training median), so the numbers can be put in context.
@@ -14,12 +17,14 @@ import argparse
 import json
 import os
 import time
+from collections.abc import Iterable
 from pathlib import Path
 
 import torch
 from torch import nn
-from torch.utils.data import DataLoader, Dataset
+from torch.utils.data import Dataset
 
+from .batches import Batches, load_bank
 from .data import Nutrition5kDataset, SyntheticDataset
 from .model import TARGETS, NutritionNet, count_parameters, scale_vector
 
@@ -44,14 +49,14 @@ def _metrics(abs_err_sum: torch.Tensor, true_sum: torch.Tensor, n: int) -> dict[
 
 
 @torch.no_grad()
-def evaluate(model: nn.Module, loader: DataLoader, device: torch.device) -> dict[str, float]:
+def evaluate(model: nn.Module, batches: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device) -> dict[str, float]:
     """Per-target MAE in real units, plus calorie MAE as a percent of mean true calories."""
     model.eval()
     scale = scale_vector(device)
     abs_err = torch.zeros(len(TARGETS), device=device)
     true_sum = torch.zeros(len(TARGETS), device=device)
     n = 0
-    for x, y in loader:
+    for x, y in batches:
         x, y = x.to(device), y.to(device)
         pred = model(x)
         abs_err += ((pred - y).abs() * scale).sum(0)
@@ -73,23 +78,12 @@ def make_datasets(args: argparse.Namespace) -> tuple[Dataset, Dataset, Dataset]:
         size = args.img_size
         return SyntheticDataset(64, size, 0), SyntheticDataset(32, size, 1), SyntheticDataset(32, size, 2)
     kw = dict(img_size=args.img_size, views=tuple(args.views.split(",")), val_fraction=args.val_fraction)
-    return (
-        Nutrition5kDataset(args.data_root, "train", train=True, **kw),
-        Nutrition5kDataset(args.data_root, "val", **kw),
-        Nutrition5kDataset(args.data_root, "test", **kw),
-    )
+    return tuple(Nutrition5kDataset(args.data_root, split, **kw) for split in ("train", "val", "test"))
 
 
-def make_loader(ds: Dataset, args: argparse.Namespace, shuffle: bool) -> DataLoader:
-    return DataLoader(
-        ds,
-        batch_size=args.batch_size,
-        shuffle=shuffle,
-        drop_last=shuffle and len(ds) > args.batch_size,
-        num_workers=args.num_workers,
-        pin_memory=torch.cuda.is_available(),
-        persistent_workers=args.num_workers > 0,
-    )
+def make_batches(ds: Dataset, args: argparse.Namespace, device: torch.device, train: bool = False) -> Batches:
+    images, targets = load_bank(ds, device, args.load_threads)
+    return Batches(images, targets, args.batch_size, shuffle=train, augment_=train)
 
 
 def fmt(m: dict[str, float]) -> str:
@@ -109,7 +103,7 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--batch-size", type=int, default=64)
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
-    p.add_argument("--num-workers", type=int, default=min(8, os.cpu_count() or 1))
+    p.add_argument("--load-threads", type=int, default=min(8, os.cpu_count() or 1), help="threads used to decode images at startup")
     p.add_argument("--no-amp", action="store_true", help="disable mixed precision on CUDA")
     p.add_argument("--device", default="auto")
     p.add_argument("--out", type=Path, default=Path("runs/default"))
@@ -119,8 +113,13 @@ def main(argv: list[str] | None = None) -> None:
     torch.manual_seed(args.seed)
     device = get_device(args.device)
     train_ds, val_ds, test_ds = make_datasets(args)
-    train_loader, val_loader = make_loader(train_ds, args, True), make_loader(val_ds, args, False)
-    print(f"images: {len(train_ds)} train, {len(val_ds)} val, {len(test_ds)} test")
+    start = time.time()
+    train_batches = make_batches(train_ds, args, device, train=True)
+    val_batches, test_batches = make_batches(val_ds, args, device), make_batches(test_ds, args, device)
+    print(
+        f"images: {len(train_ds)} train, {len(val_ds)} val, {len(test_ds)} test "
+        f"(decoded into {device} memory in {time.time() - start:.0f}s)"
+    )
 
     model = NutritionNet(args.backbone, pretrained=not args.no_pretrained).to(device)
     use_amp = device.type == "cuda" and not args.no_amp
@@ -130,7 +129,7 @@ def main(argv: list[str] | None = None) -> None:
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.OneCycleLR(
-        opt, max_lr=args.lr, epochs=args.epochs, steps_per_epoch=len(train_loader)
+        opt, max_lr=args.lr, epochs=args.epochs, steps_per_epoch=len(train_batches)
     )
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     criterion = nn.SmoothL1Loss(reduction="none", beta=0.1)
@@ -144,8 +143,9 @@ def main(argv: list[str] | None = None) -> None:
         model.train()
         epoch_start = time.time()
         running, steps = 0.0, 0
-        for x, y in train_loader:
-            x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
+        for x, y in train_batches:
+            if device.type == "cuda":
+                x = x.contiguous(memory_format=torch.channels_last)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 pred = model(x)
             loss = (criterion(pred.float(), y) * weights).mean()
@@ -156,7 +156,7 @@ def main(argv: list[str] | None = None) -> None:
             sched.step()
             running += loss.item()
             steps += 1
-        metrics = evaluate(model, val_loader, device)
+        metrics = evaluate(model, val_batches, device)
         metrics.update(epoch=epoch, train_loss=running / max(steps, 1))
         history.append(metrics)
         print(
@@ -180,7 +180,7 @@ def main(argv: list[str] | None = None) -> None:
     # Final, one-off test-set report with the best checkpoint.
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device, weights_only=True)["state_dict"])
     report = {
-        "all": evaluate(model, make_loader(test_ds, args, False), device),
+        "all": evaluate(model, test_batches, device),
         "baseline_median": baseline_metrics(train_ds.targets(), test_ds.targets()),
     }
     if not args.synthetic:
@@ -189,7 +189,7 @@ def main(argv: list[str] | None = None) -> None:
                 view_ds = Nutrition5kDataset(args.data_root, "test", args.img_size, views=(view,))
             except RuntimeError:
                 continue
-            report[f"view_{view}"] = evaluate(model, make_loader(view_ds, args, False), device)
+            report[f"view_{view}"] = evaluate(model, make_batches(view_ds, args, device), device)
             report[f"view_{view}"]["images"] = len(view_ds)
     (args.out / "test_metrics.json").write_text(json.dumps(report, indent=2))
     print(f"\nTEST ({len(test_ds)} images)")

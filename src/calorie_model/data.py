@@ -19,23 +19,6 @@ def eval_transform(img_size: int) -> T.Compose:
     return T.Compose([T.Resize((img_size, img_size)), T.ToTensor()])
 
 
-def train_transform(img_size: int) -> T.Compose:
-    # Plates have no canonical orientation, so flips/rotations are label-preserving.
-    # Scale jitter is kept mild because apparent size is a portion cue and
-    # aggressive crops would corrupt the mass/calorie label.
-    return T.Compose(
-        [
-            T.Resize((img_size, img_size)),
-            T.RandomResizedCrop(img_size, scale=(0.85, 1.0), ratio=(0.9, 1.1)),
-            T.RandomHorizontalFlip(),
-            T.RandomVerticalFlip(),
-            T.RandomApply([T.RandomRotation(30)], p=0.5),
-            T.ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.02),
-            T.ToTensor(),
-        ]
-    )
-
-
 def load_rgb_uint8(path: str | Path, img_size: int) -> np.ndarray:
     """Load one image as a ``(img_size, img_size, 3)`` uint8 RGB array.
 
@@ -71,7 +54,6 @@ class Nutrition5kDataset(Dataset):
         root: str | Path,
         split: str,
         img_size: int = 224,
-        train: bool = False,
         views: tuple[str, ...] = ("overhead", "side"),
         val_fraction: float = 0.1,
         seed: int = 0,
@@ -79,7 +61,7 @@ class Nutrition5kDataset(Dataset):
         if split not in ("train", "val", "test"):
             raise ValueError("split must be 'train', 'val' or 'test'")
         root = Path(root)
-        self.transform = train_transform(img_size) if train else eval_transform(img_size)
+        self.transform = eval_transform(img_size)
 
         labels = read_labels(root / "labels.csv")
         with open(root / "index.csv", newline="") as f:

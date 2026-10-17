@@ -51,9 +51,13 @@ python -m calorie_model.train --views overhead,side --out runs/overhead_plus_sid
 ```
 
 Defaults: MobileNetV3-Small, ImageNet-pretrained (downloaded on first use), 224 px,
-30 epochs, batch 64, mixed precision, `--num-workers` = min(8, CPU threads). If
-data loading errors on Windows, retry with `--num-workers 0`. Out of GPU memory:
-lower `--batch-size`. Try `--backbone mobilenet_v3_large` as a second experiment.
+30 epochs, batch 64, mixed precision. Every image is decoded once at startup into
+GPU memory (about 3.5 GB, roughly a minute; `--load-threads` sets the decoding
+threads) and augmented on the GPU, so there are no DataLoader worker processes.
+That replaced an earlier version that managed only ~82 images/s and crashed with
+`WinError 6` on Windows. Out of GPU memory: lower `--batch-size`, or if the
+startup step fails, close other GPU programs. Try `--backbone mobilenet_v3_large`
+as a second experiment.
 
 Each run writes `best.pt`, `history.json` and `test_metrics.json` in its folder.
 The end of the log shows the test table: overall, per view type, and the

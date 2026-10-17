@@ -35,7 +35,7 @@ def test_unknown_backbone_rejected():
 def test_synthetic_training_runs_and_checkpoints(tmp_path):
     train_main(
         ["--synthetic", "--no-pretrained", "--epochs", "2", "--batch-size", "16",
-         "--img-size", str(IMG), "--num-workers", "0", "--device", "cpu", "--out", str(tmp_path)]
+         "--img-size", str(IMG), "--load-threads", "1", "--device", "cpu", "--out", str(tmp_path)]
     )
     assert (tmp_path / "best.pt").exists()
     assert (tmp_path / "history.json").exists()
@@ -261,3 +261,82 @@ def test_tflite_export_matches_torch_and_takes_uint8(tmp_path):
     inp, out = interp.get_input_details()[0], interp.get_output_details()[0]
     assert inp["dtype"] == np.uint8 and tuple(inp["shape"]) == (1, IMG, IMG, 3)
     assert out["dtype"] == np.float32 and tuple(out["shape"]) == (1, len(TARGETS))
+
+
+def test_gpu_augmentation_identity_and_flips_are_exact():
+    from calorie_model.batches import augment, identity_params
+
+    x = torch.rand(3, 3, 32, 32)
+    p = identity_params(3)
+    assert torch.allclose(augment(x, p), x, atol=1e-4)
+    assert torch.allclose(augment(x, {**p, "flip_x": -torch.ones(3)}), x.flip(-1), atol=1e-4)
+    assert torch.allclose(augment(x, {**p, "flip_y": -torch.ones(3)}), x.flip(-2), atol=1e-4)
+
+
+def test_gpu_augmentation_quarter_turn_matches_rot90():
+    import math
+
+    from calorie_model.batches import augment, identity_params
+
+    x = torch.rand(2, 3, 32, 32)
+    out = augment(x, {**identity_params(2), "angle": torch.full((2,), math.pi / 2)})
+    assert torch.allclose(out, x.rot90(1, (2, 3)), atol=1e-4) or torch.allclose(out, x.rot90(-1, (2, 3)), atol=1e-4)
+
+
+def test_gpu_augmentation_zoom_crops_the_centre():
+    from calorie_model.batches import augment, identity_params
+
+    x = torch.zeros(1, 3, 32, 32)
+    x[:, :, 12:20, 12:20] = 1.0  # bright centre square
+    zoomed = augment(x, {**identity_params(1), "w": torch.tensor([0.5]), "h": torch.tensor([0.5])})
+    assert zoomed.mean() > x.mean() * 3  # the centre now fills far more of the frame
+
+
+def test_gpu_augmentation_colour_ops_behave():
+    from calorie_model.batches import augment, identity_params
+
+    x = torch.rand(2, 3, 16, 16)
+    p = identity_params(2)
+    assert augment(x, {**p, "brightness": torch.full((2,), 0.5)}).mean() < x.mean()
+    grey = augment(x, {**p, "saturation": torch.zeros(2)})
+    assert torch.allclose(grey[:, 0], grey[:, 1], atol=1e-4) and torch.allclose(grey[:, 1], grey[:, 2], atol=1e-4)
+    assert augment(x, {**p, "hue": torch.full((2,), 0.3)}).std() > 0  # runs, stays finite
+    assert torch.isfinite(augment(x, {**p, "hue": torch.full((2,), 0.3)})).all()
+
+
+def test_sampled_augmentation_keeps_shape_and_range():
+    from calorie_model.batches import augment, sample_params
+
+    torch.manual_seed(0)
+    x = torch.rand(16, 3, 40, 40)
+    out = augment(x, sample_params(16, "cpu"))
+    assert out.shape == x.shape and out.min() >= 0 and out.max() <= 1
+    assert not torch.allclose(out, x)
+
+
+def test_batches_cover_every_sample_once_and_respect_drop_last():
+    from calorie_model.batches import Batches
+
+    images = torch.arange(10, dtype=torch.uint8).view(10, 1, 1, 1).expand(10, 3, 4, 4).contiguous()
+    targets = torch.arange(10, dtype=torch.float32).view(10, 1).expand(10, 5).contiguous()
+
+    plain = Batches(images, targets, batch_size=4)
+    assert len(plain) == 3 and [len(y) for _, y in plain] == [4, 4, 2]
+    assert torch.equal(torch.cat([y[:, 0] for _, y in plain]), torch.arange(10, dtype=torch.float32))
+
+    shuffled = Batches(images, targets, batch_size=4, shuffle=True)
+    seen = torch.cat([y[:, 0] for _, y in shuffled])
+    assert len(shuffled) == 2 and len(seen) == 8 and len(set(seen.tolist())) == 8  # last partial batch dropped
+
+    x, y = next(iter(plain))
+    assert x.dtype == torch.float32 and x.max() <= 1 and torch.allclose(x[:, 0, 0, 0] * 255, y[:, 0])  # image i matches target i
+
+
+def test_load_bank_matches_dataset_images_exactly(tmp_path):
+    from calorie_model.batches import load_bank
+
+    _fake_cache(tmp_path)
+    ds = Nutrition5kDataset(tmp_path, "train", img_size=IMG, val_fraction=0.2)
+    images, targets = load_bank(ds, "cpu", threads=2)
+    assert images.dtype == torch.uint8 and images.shape == (len(ds), 3, IMG, IMG)
+    assert torch.equal(images[3].float() / 255, ds[3][0]) and torch.equal(targets, ds.targets())
