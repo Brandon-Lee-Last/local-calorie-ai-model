@@ -6,6 +6,11 @@
 
 ## Model contract
 
+Checked by converting a checkpoint with `export_tflite` and inspecting the file
+with the LiteRT interpreter on a desktop CPU: input `[1, 224, 224, 3]` `uint8`,
+output `[1, 5]` `float32`, 4.45 MB (fp32). Not yet run on a phone. Index the
+tensors by position, since their auto-generated names are not meaningful.
+
 | | |
 |---|---|
 | Input `image` | `uint8`, shape `[1, 224, 224, 3]`, RGB, NHWC, raw 0-255 pixels |

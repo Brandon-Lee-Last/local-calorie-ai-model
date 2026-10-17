@@ -34,7 +34,8 @@ class DeployModel(nn.Module):
         self.register_buffer("scale", scale_vector(), persistent=False)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
-        x = image.permute(0, 3, 1, 2).float() / 255.0
+        # Cast before permuting: litert-torch cannot lower permute on uint8 tensors.
+        x = image.float().permute(0, 3, 1, 2) / 255.0
         return self.net(x) * self.scale
 
 

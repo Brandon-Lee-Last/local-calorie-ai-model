@@ -8,8 +8,9 @@ Target: **Android**, inside a **React Native / Expo** app (see
 [docs/android-expo.md](docs/android-expo.md)).
 
 > Status: v0 scaffold. The train → export → inference pipeline runs end to end
-> and is tested (`pytest`), but **no real model has been trained yet**, so there
-> are no accuracy numbers, and nothing has been run on a phone.
+> and is tested (`pytest`). The TFLite export converts and matches PyTorch to
+> ~4e-6 when run on a desktop CPU. **No real model has been trained yet**, so
+> there are no accuracy numbers, and nothing has been run on a phone.
 
 ## Approach (v0)
 
@@ -140,8 +141,10 @@ of the mean true calories.
    a subset of dishes. Train an RGB-D variant and compare against RGB-only on the
    same dishes before building any depth capture in the app (Android depth
    support depends on the device and has not been investigated yet).
-3. **Verify TFLite on a device:** run `export_tflite`, check parity, then measure
-   latency and the int8 accuracy drop on a real mid-range Android phone.
+3. **Verify TFLite on a device:** conversion and desktop-CPU parity are done
+   (4.45 MB fp32, uint8 NHWC in, float32 `[1, 5]` out). Still to do: int8/fp16
+   TFLite (not attempted; the ONNX int8 path is separate), then latency and the
+   accuracy drop on a real mid-range Android phone.
 4. **Broaden coverage:** classification head + nutrient lookup (v1), after
    checking dataset licences.
 5. **Close the domain gap:** collect phone-style photos; add an uncertainty output

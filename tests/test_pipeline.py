@@ -156,3 +156,21 @@ def test_int8_quantization_shrinks_model_and_still_runs(tmp_path):
         None, {"image": random_pixels(1, IMG)}
     )[0]
     assert out.shape == (1, len(TARGETS)) and np.isfinite(out).all()
+
+
+def test_tflite_export_matches_torch_and_takes_uint8(tmp_path):
+    # Needs the optional converter (pip install litert-torch ai-edge-litert); skipped otherwise.
+    pytest.importorskip("litert_torch")
+    pytest.importorskip("ai_edge_litert")
+    from ai_edge_litert.interpreter import Interpreter
+
+    from calorie_model.export_tflite import check_parity, export_tflite
+
+    net = NutritionNet(pretrained=False).eval()
+    export_tflite(net, IMG, tmp_path / "m.tflite")
+    assert check_parity(net, tmp_path / "m.tflite", IMG) < 1e-1
+
+    interp = Interpreter(model_path=str(tmp_path / "m.tflite"))
+    inp, out = interp.get_input_details()[0], interp.get_output_details()[0]
+    assert inp["dtype"] == np.uint8 and tuple(inp["shape"]) == (1, IMG, IMG, 3)
+    assert out["dtype"] == np.float32 and tuple(out["shape"]) == (1, len(TARGETS))
