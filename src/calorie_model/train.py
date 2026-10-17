@@ -13,6 +13,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import time
 from pathlib import Path
 
 import torch
@@ -141,6 +142,7 @@ def main(argv: list[str] | None = None) -> None:
     history = []
     for epoch in range(1, args.epochs + 1):
         model.train()
+        epoch_start = time.time()
         running, steps = 0.0, 0
         for x, y in train_loader:
             x, y = x.to(device, non_blocking=True), y.to(device, non_blocking=True)
@@ -157,7 +159,10 @@ def main(argv: list[str] | None = None) -> None:
         metrics = evaluate(model, val_loader, device)
         metrics.update(epoch=epoch, train_loss=running / max(steps, 1))
         history.append(metrics)
-        print(f"epoch {epoch:3d}  loss {metrics['train_loss']:.4f}  val {fmt(metrics)}", flush=True)
+        print(
+            f"epoch {epoch:3d}  {time.time() - epoch_start:4.0f}s  loss {metrics['train_loss']:.4f}  val {fmt(metrics)}",
+            flush=True,
+        )
         if metrics["mae_calories"] < best:
             best = metrics["mae_calories"]
             torch.save(
