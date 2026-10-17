@@ -39,6 +39,10 @@ def test_synthetic_training_runs_and_checkpoints(tmp_path):
     )
     assert (tmp_path / "best.pt").exists()
     assert (tmp_path / "history.json").exists()
+    import json
+
+    report = json.loads((tmp_path / "test_metrics.json").read_text())
+    assert {"all", "baseline_median"} <= set(report) and "mae_calories" in report["all"]
 
 
 def test_training_reduces_loss():
@@ -101,41 +105,124 @@ def test_load_rgb_uint8_shape_and_dtype(tmp_path):
     assert arr.shape == (IMG, IMG, 3) and arr.dtype == np.uint8
 
 
-def _fake_nutrition5k(root, split_name="rgb_train_ids.txt"):
-    (root / "metadata").mkdir(parents=True)
-    (root / "dish_ids" / "splits").mkdir(parents=True)
-    # Real rows are headerless, with a variable number of per-ingredient columns.
-    (root / "metadata" / "dish_metadata_cafe1.csv").write_text(
-        "dish_1,300.0,250.0,10.0,40.0,12.0,2,ingr_1,rice,100,130,0.3,28,2.5,ingr_2,egg,50,70,5,0.5,6\n"
-        "dish_2,120.0,90.0,3.0,15.0,5.0,0\n"
-        "dish_noimage,50.0,50.0,1.0,1.0,1.0,0\n"
-    )
-    (root / "dish_ids" / "splits" / split_name).write_text("dish_1\ndish_2\ndish_noimage\n")
-    for d in ("dish_1", "dish_2"):
-        img_dir = root / "imagery" / "realsense_overhead" / d
-        img_dir.mkdir(parents=True)
-        Image.new("RGB", (64, 48), (10, 20, 30)).save(img_dir / "rgb.png")
+def _fake_cache(root):
+    """A tiny prepared cache: 5 train dishes and 2 test dishes, each with an overhead and a side image."""
+    import csv
+
+    rows, labels = [], []
+    for i in range(7):
+        dish, split = f"dish_{i}", "test" if i >= 5 else "train"
+        (root / "cache" / dish).mkdir(parents=True)
+        labels.append((dish, 300.0 + i, 250.0, 10.0, 40.0, 12.0))
+        for view, name in (("overhead", "overhead.jpg"), ("side", "side_A_0.jpg")):
+            Image.new("RGB", (64, 48), (10, 20, 30)).save(root / "cache" / dish / name)
+            rows.append((dish, split, view, f"cache/{dish}/{name}"))
+    with open(root / "index.csv", "w", newline="") as f:
+        csv.writer(f).writerows([("dish_id", "split", "view", "path"), *rows])
+    with open(root / "labels.csv", "w", newline="") as f:
+        csv.writer(f).writerows([("dish_id", *TARGETS), *labels])
 
 
-def test_nutrition5k_loader_parses_labels_and_skips_missing_images(tmp_path):
-    _fake_nutrition5k(tmp_path)
-    ds = Nutrition5kDataset(tmp_path, "train", img_size=IMG)
-    assert len(ds) == 2  # dish_noimage has a label but no image
+def test_nutrition5k_splits_are_disjoint_by_dish(tmp_path):
+    _fake_cache(tmp_path)
+    sets = {s: Nutrition5kDataset(tmp_path, s, img_size=IMG, val_fraction=0.2) for s in ("train", "val", "test")}
+    dishes = {s: {p.parent.name for p, _ in ds.samples} for s, ds in sets.items()}
+    assert len(sets["val"]) == 2 and len(sets["train"]) == 8 and len(sets["test"]) == 4  # 1 val dish, 2 views each
+    assert not dishes["train"] & dishes["val"] and not dishes["train"] & dishes["test"]
+    assert dishes["test"] == {"dish_5", "dish_6"}  # only the official test dishes
+    again = Nutrition5kDataset(tmp_path, "val", img_size=IMG, val_fraction=0.2)
+    assert [p for p, _ in again.samples] == [p for p, _ in sets["val"].samples]  # deterministic
+
+
+def test_nutrition5k_loader_labels_and_view_filter(tmp_path):
+    _fake_cache(tmp_path)
+    ds = Nutrition5kDataset(tmp_path, "test", img_size=IMG, views=("overhead",))
+    assert len(ds) == 2 and all(p.name == "overhead.jpg" for p, _ in ds.samples)
     x, y = ds[0]
     assert x.shape == (3, IMG, IMG) and 0 <= x.min() and x.max() <= 1
-    # Targets are stored in scaled units: 300 kcal / 500 = 0.6, 250 g / 400 = 0.625.
-    assert torch.allclose(y[:2], torch.tensor([0.6, 0.625]), atol=1e-6)
+    # Targets are scaled units: 305 kcal / 500 = 0.61, 250 g / 400 = 0.625.
+    assert torch.allclose(y[:2], torch.tensor([0.61, 0.625]), atol=1e-6)
+    assert ds.targets().shape == (2, len(TARGETS))
 
 
-def test_nutrition5k_loader_tolerates_other_split_filename(tmp_path):
-    _fake_nutrition5k(tmp_path, split_name="rgb_train_splits.txt")
-    assert len(Nutrition5kDataset(tmp_path, "train", img_size=IMG)) == 2
+def test_nutrition5k_loader_explains_missing_images(tmp_path):
+    _fake_cache(tmp_path)
+    with pytest.raises(RuntimeError, match="prepare_data"):
+        Nutrition5kDataset(tmp_path, "test", img_size=IMG, views=("nonexistent",))
 
 
-def test_nutrition5k_loader_error_lists_found_split_files(tmp_path):
-    _fake_nutrition5k(tmp_path, split_name="weird.txt")
-    with pytest.raises(FileNotFoundError, match="weird.txt"):
-        Nutrition5kDataset(tmp_path, "train", img_size=IMG)
+def _h264_stream(frames=12, size=(128, 96)):
+    import io
+
+    av = pytest.importorskip("av")
+    buf = io.BytesIO()
+    out = av.open(buf, "w", format="h264")
+    stream = out.add_stream("libx264", rate=30)
+    stream.width, stream.height, stream.pix_fmt = size[0], size[1], "yuv420p"
+    for i in range(frames):
+        arr = np.full((size[1], size[0], 3), (i * 20) % 255, dtype=np.uint8)
+        for packet in stream.encode(av.VideoFrame.from_ndarray(arr, format="rgb24")):
+            out.mux(packet)
+    for packet in stream.encode():
+        out.mux(packet)
+    out.close()
+    return buf.getvalue()
+
+
+def test_decode_frames_drops_the_partial_last_frame_of_a_cut_stream():
+    from calorie_model.prepare_data import decode_frames
+
+    data = _h264_stream(frames=12)
+    assert len(decode_frames(data, truncated=False, count=100)) == 12
+    assert len(decode_frames(data, truncated=True, count=100)) == 11
+    assert len(decode_frames(data, truncated=False, count=1)) == 1
+    assert decode_frames(b"not video at all", truncated=False) == []
+
+
+def test_prepare_data_end_to_end_against_a_fake_bucket(tmp_path, monkeypatch):
+    import csv
+    import io
+
+    from calorie_model import prepare_data as pd_
+
+    def png(color):
+        buf = io.BytesIO()
+        Image.new("RGB", (64, 48), color).save(buf, format="PNG")
+        return buf.getvalue()
+
+    ingredient = ",ingr_1,rice,100,130,0.3,28,2.5"  # variable-length tail after the six dish columns
+    bucket = {
+        "metadata/dish_metadata_cafe1.csv": f"dish_a,300,200,10,30,15,1{ingredient}\ndish_b,200,150,5,25,10,0\ndish_c,400,300,20,40,20,0\n".encode(),
+        "metadata/dish_metadata_cafe2.csv": b"dish_x,100,80,2,10,5,0\n",
+        "dish_ids/splits/rgb_train_ids.txt": b"dish_a\ndish_b\ndish_unlabelled\n",
+        "dish_ids/splits/rgb_test_ids.txt": b"dish_c\n",
+        "imagery/realsense_overhead/dish_a/rgb.png": png((200, 10, 10)),
+        "imagery/realsense_overhead/dish_c/rgb.png": png((10, 200, 10)),
+        "imagery/side_angles/dish_a/camera_A.h264": _h264_stream(),
+    }
+
+    def fake_fetch(url, byte_limit=None, retries=4):
+        data = bucket.get(url.removeprefix(pd_.BASE))
+        return None if data is None else (data[:byte_limit] if byte_limit else data)
+
+    monkeypatch.setattr(pd_, "fetch", fake_fetch)
+
+    out = tmp_path / "n5k"
+    pd_.prepare(out, {"overhead", "side"}, size=32, side_bytes=100_000, side_frames=1, workers=2)
+    index = list(csv.DictReader(open(out / "index.csv")))
+    got = {(r["dish_id"], r["split"], r["view"]) for r in index}
+    assert got == {
+        ("dish_a", "train", "overhead"),
+        ("dish_a", "train", "side"),
+        ("dish_c", "test", "overhead"),
+    }  # dish_b has no media; dish_x has none either; unlabelled ids are ignored
+    assert Image.open(out / "cache/dish_a/overhead.jpg").size == (32, 32)
+    labels = {r["dish_id"]: r for r in csv.DictReader(open(out / "labels.csv"))}
+    assert set(labels) == {"dish_a", "dish_b", "dish_c", "dish_x"}  # dish_x joins train as extra data
+    assert float(labels["dish_a"]["calories"]) == 300.0 and float(labels["dish_a"]["protein"]) == 15.0
+
+    pd_.prepare(tmp_path / "n5k_noextra", {"overhead"}, size=32, extra=False, workers=2)
+    assert "dish_x" not in open(tmp_path / "n5k_noextra" / "labels.csv").read()
 
 
 def test_int8_quantization_shrinks_model_and_still_runs(tmp_path):

@@ -20,9 +20,9 @@ def eval_transform(img_size: int) -> T.Compose:
 
 
 def train_transform(img_size: int) -> T.Compose:
-    # Overhead plates have no canonical orientation, so flips/rotations are
-    # label-preserving. Scale jitter is kept mild because apparent size is a
-    # portion cue and aggressive crops would corrupt the mass/calorie label.
+    # Plates have no canonical orientation, so flips/rotations are label-preserving.
+    # Scale jitter is kept mild because apparent size is a portion cue and
+    # aggressive crops would corrupt the mass/calorie label.
     return T.Compose(
         [
             T.Resize((img_size, img_size)),
@@ -47,67 +47,60 @@ def load_rgb_uint8(path: str | Path, img_size: int) -> np.ndarray:
     return np.asarray(resized, dtype=np.uint8)
 
 
+def _scale() -> torch.Tensor:
+    return torch.tensor([TARGET_SCALE[t] for t in TARGETS])
+
+
+def read_labels(path: Path) -> dict[str, torch.Tensor]:
+    """``labels.csv`` (real units) -> ``{dish_id: scaled target}`` in ``TARGETS`` order."""
+    with open(path, newline="") as f:
+        return {r["dish_id"]: torch.tensor([float(r[t]) for t in TARGETS]) / _scale() for r in csv.DictReader(f)}
+
+
 class Nutrition5kDataset(Dataset):
-    """Nutrition5k overhead RGB images with dish-level calorie/mass/macro labels.
+    """Nutrition5k images from the cache built by ``calorie_model.prepare_data``.
 
-    Expects the layout produced by ``gsutil -m cp -r gs://nutrition5k_dataset/...``::
-
-        root/metadata/dish_metadata_cafe1.csv        (and cafe2)
-        root/imagery/realsense_overhead/<dish_id>/rgb.png
-        root/dish_ids/splits/rgb_{train,test}_ids.txt
-
-    Verify this against your download; ``scripts/download_nutrition5k.sh`` fetches it.
-    The metadata CSVs have no header and a variable number of per-ingredient
-    columns after the first six, which are:
-    ``dish_id, calories, mass, fat, carb, protein``.
+    ``split`` is ``train``, ``val`` or ``test``. ``test`` is the official test split.
+    ``val`` is a fixed ``val_fraction`` of the *dishes* in the training pool, held
+    out so that different views of one dish never straddle train and val.
+    ``views`` selects overhead photos, side-angle frames or both.
     """
 
-    def __init__(self, root: str | Path, split: str, img_size: int = 224, train: bool = False) -> None:
-        if split not in ("train", "test"):
-            raise ValueError("split must be 'train' or 'test'")
-        self.root = Path(root)
+    def __init__(
+        self,
+        root: str | Path,
+        split: str,
+        img_size: int = 224,
+        train: bool = False,
+        views: tuple[str, ...] = ("overhead", "side"),
+        val_fraction: float = 0.1,
+        seed: int = 0,
+    ) -> None:
+        if split not in ("train", "val", "test"):
+            raise ValueError("split must be 'train', 'val' or 'test'")
+        root = Path(root)
         self.transform = train_transform(img_size) if train else eval_transform(img_size)
 
-        labels = self._read_labels()
-        ids = self._read_split_ids(split)
-        self.samples = []
-        for dish_id in ids:
-            img = self.root / "imagery" / "realsense_overhead" / dish_id / "rgb.png"
-            # Overhead RGB-D images are only included "when available", so skip gaps.
-            if dish_id in labels and img.exists():
-                self.samples.append((img, labels[dish_id]))
+        labels = read_labels(root / "labels.csv")
+        with open(root / "index.csv", newline="") as f:
+            rows = list(csv.DictReader(f))
+
+        pool = "test" if split == "test" else "train"
+        dishes = sorted({r["dish_id"] for r in rows if r["split"] == pool and r["dish_id"] in labels})
+        keep = set(dishes)
+        if split != "test":
+            n_val = max(1, round(len(dishes) * val_fraction)) if val_fraction > 0 and len(dishes) > 1 else 0
+            val = set(random.Random(seed).sample(dishes, n_val))
+            keep = val if split == "val" else keep - val
+
+        self.samples = [
+            (root / r["path"], labels[r["dish_id"]]) for r in rows if r["dish_id"] in keep and r["view"] in views
+        ]
         if not self.samples:
-            raise RuntimeError(
-                f"no usable samples under {self.root} for split {split!r}: "
-                f"{len(ids)} ids in split file, {len(labels)} labelled dishes, "
-                f"{sum((self.root / 'imagery' / 'realsense_overhead' / i / 'rgb.png').exists() for i in ids)} "
-                "with an rgb.png. Check the dataset layout."
-            )
+            raise RuntimeError(f"no images for split {split!r}, views {views} under {root}; run prepare_data first")
 
-    def _read_split_ids(self, split: str) -> list[str]:
-        # The split filenames are not documented in the dataset README, so accept
-        # the expected name, else a single unambiguous ``rgb_<split>*.txt``.
-        splits_dir = self.root / "dish_ids" / "splits"
-        exact = splits_dir / f"rgb_{split}_ids.txt"
-        matches = [exact] if exact.exists() else sorted(splits_dir.glob(f"rgb_{split}*.txt"))
-        if len(matches) != 1:
-            found = sorted(p.name for p in splits_dir.glob("*")) if splits_dir.exists() else []
-            raise FileNotFoundError(
-                f"expected exactly one rgb_{split}*.txt in {splits_dir}; found files: {found}"
-            )
-        return [line.strip() for line in matches[0].read_text().splitlines() if line.strip()]
-
-    def _read_labels(self) -> dict[str, torch.Tensor]:
-        # CSV column order is calories, mass, fat, carb, protein == TARGETS order.
-        labels = {}
-        for csv_path in sorted((self.root / "metadata").glob("dish_metadata_cafe*.csv")):
-            with open(csv_path, newline="") as f:
-                for row in csv.reader(f):
-                    if len(row) < 6:
-                        continue
-                    values = [float(v) for v in row[1:6]]
-                    labels[row[0]] = torch.tensor(values) / _scale()
-        return labels
+    def targets(self) -> torch.Tensor:
+        return torch.stack([t for _, t in self.samples])
 
     def __len__(self) -> int:
         return len(self.samples)
@@ -130,16 +123,18 @@ class SyntheticDataset(Dataset):
         self.img_size = img_size
         self.params = [(rng.random(), rng.random(), rng.random()) for _ in range(n)]
 
+    def targets(self) -> torch.Tensor:
+        return torch.stack([self._target(*p) for p in self.params])
+
+    @staticmethod
+    def _target(r: float, g: float, b: float) -> torch.Tensor:
+        # In scaled units: each output tracks one colour channel or a mix.
+        return torch.tensor([r, (r + g) / 2, g, b, (g + b) / 2])
+
     def __len__(self) -> int:
         return len(self.params)
 
     def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
         r, g, b = self.params[i]
         img = torch.stack([torch.full((self.img_size, self.img_size), c) for c in (r, g, b)])
-        # In scaled units: each output tracks one colour channel or a mix.
-        target = torch.tensor([r, (r + g) / 2, g, b, (g + b) / 2])
-        return img, target
-
-
-def _scale() -> torch.Tensor:
-    return torch.tensor([TARGET_SCALE[t] for t in TARGETS])
+        return img, self._target(r, g, b)

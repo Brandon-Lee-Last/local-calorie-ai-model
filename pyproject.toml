@@ -16,7 +16,8 @@ dependencies = [
 
 [project.optional-dependencies]
 export = ["onnx", "onnxruntime"]
-dev = ["pytest", "onnx", "onnxruntime"]
+data = ["av"]
+dev = ["pytest", "onnx", "onnxruntime", "av"]
 
 [tool.setuptools.packages.find]
 where = ["src"]

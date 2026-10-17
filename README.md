@@ -69,12 +69,13 @@ planned v1: classifier for per-gram nutrient density, regressor for portion.
 ```
 src/calorie_model/
   model.py          NutritionNet, target order and scales
-  data.py           Nutrition5k loader, augmentations, synthetic smoke-test data
-  train.py          training loop (AdamW + OneCycle, weighted SmoothL1), eval in real units
+  prepare_data.py   download Nutrition5k over HTTPS, build a compact 256px image cache
+  data.py           cached-dataset loader (train/val/test), augmentations, synthetic data
+  train.py          training loop (AdamW + OneCycle, AMP), val split, final test report + baseline
   export.py         checkpoint -> ONNX (+ parity check, optional int8)
   export_tflite.py  checkpoint -> .tflite via litert-torch (+ parity check)
   predict.py        run an ONNX model on one image, print JSON
-scripts/download_nutrition5k.sh
+docs/train-on-pc.md   step-by-step runbook for training on a Windows/Linux GPU machine
 docs/android-expo.md
 tests/test_pipeline.py
 ```
@@ -88,8 +89,8 @@ pip install -e ".[dev]"
 pytest
 python -m calorie_model.train --synthetic --no-pretrained --epochs 2 --out runs/smoke
 
-# 2. Real training
-scripts/download_nutrition5k.sh data/nutrition5k      # needs gsutil
+# 2. Real training (full walkthrough in docs/train-on-pc.md)
+python -m calorie_model.prepare_data --out data/nutrition5k      # needs `pip install av`; no gsutil
 python -m calorie_model.train --data-root data/nutrition5k --epochs 30 --out runs/v0
 
 # 3. Export
@@ -100,14 +101,15 @@ python -m calorie_model.predict build/nutrition.onnx some_food.jpg
 python -m calorie_model.export_tflite runs/v0/best.pt --out build/nutrition.tflite
 ```
 
-Training reports MAE per target in real units and calorie MAE as a percentage
-of the mean true calories.
+Training picks the best epoch on a validation split of whole dishes held out from
+the training pool, then reports the official test split once, per view type and
+next to a baseline that always predicts the training median.
 
 ## Data
 
 | Dataset | Use | Notes |
 |---|---|---|
-| Nutrition5k | v0 training: images + weighed calories/mass/macros | Released under CC BY 4.0 per its README (commercial use allowed, cite the CVPR 2021 paper). Collected in a few California cafeterias, so expect bias. The README does not list the split filenames; the loader accepts `rgb_<split>_ids.txt` or a single `rgb_<split>*.txt` and reports what it found otherwise. The split files and `rgb.png` paths are still unchecked against a real download. |
+| Nutrition5k | v0 training: images + weighed calories/mass/macros | CC BY 4.0 per its README (commercial use allowed, cite the CVPR 2021 paper). Collected in a few California cafeterias, so expect bias. Bucket layout and the `rgb_{train,test}_ids.txt` split files are verified. 5,006 labelled dishes; only 3,490 have an overhead photo (1.45 GB). The side-angle videos (192 GB, up to 4 cameras per dish, many missing) are sampled: `prepare_data` fetches only the first ~1 MB of each and keeps one frame, giving ~4 images per dish. Those frames have a yellow cast and unusual angles, so they are more data, not phone-like data. |
 | Food-101 and larger food-class sets | v1 classifier for broad coverage | Licences vary per dataset and have **not** been checked yet; do that before training on any of them. |
 | USDA FoodData Central / Open Food Facts | per-100 g nutrient tables for the v1 lookup | Licence terms to be confirmed. |
 
@@ -135,8 +137,10 @@ of the mean true calories.
 
 ## Roadmap
 
-1. **Train v0** on Nutrition5k; record baseline error and compare against always
-   predicting the dataset mean.
+1. **Train v0** on Nutrition5k (`docs/train-on-pc.md`). Run overhead-only vs
+   overhead+side and compare on the official test split. Reference point: always
+   guessing the training median calories is off by **185 kcal on average (73% of
+   the mean)** on the 709 official test dishes, so a trained model has to beat that.
 2. **Measure whether depth is worth it.** Nutrition5k includes overhead depth for
    a subset of dishes. Train an RGB-D variant and compare against RGB-only on the
    same dishes before building any depth capture in the app (Android depth
