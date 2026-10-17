@@ -1,0 +1,17 @@
+__pycache__/
+*.py[cod]
+*.egg-info/
+.pytest_cache/
+.venv/
+build/
+dist/
+
+# data, checkpoints, exported models
+data/
+runs/
+checkpoints/
+*.pt
+*.pth
+*.onnx
+*.tflite
+*.mlpackage
