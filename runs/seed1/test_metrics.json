@@ -1,0 +1,36 @@
+{
+  "all": {
+    "mae_calories": 74.13851928710938,
+    "mae_mass": 44.48270797729492,
+    "mae_fat": 5.941929340362549,
+    "mae_carb": 6.931830406188965,
+    "mae_protein": 5.191311836242676,
+    "mae_calories_pct": 29.042932391166687
+  },
+  "baseline_median": {
+    "mae_calories": 185.5597686767578,
+    "mae_mass": 117.74919891357422,
+    "mae_fat": 11.631219863891602,
+    "mae_carb": 13.97904109954834,
+    "mae_protein": 13.737467765808105,
+    "mae_calories_pct": 72.69096970558167
+  },
+  "view_overhead": {
+    "mae_calories": 52.86595153808594,
+    "mae_mass": 36.79248046875,
+    "mae_fat": 4.161041259765625,
+    "mae_carb": 5.644822120666504,
+    "mae_protein": 5.566066265106201,
+    "mae_calories_pct": 20.69384455680847,
+    "images": 507
+  },
+  "view_side": {
+    "mae_calories": 78.28186798095703,
+    "mae_mass": 45.98044204711914,
+    "mae_fat": 6.288754940032959,
+    "mae_carb": 7.182408332824707,
+    "mae_protein": 5.1184282302856445,
+    "mae_calories_pct": 30.670613050460815,
+    "images": 2603
+  }
+}

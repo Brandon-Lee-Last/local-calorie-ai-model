@@ -1,0 +1,19 @@
+{
+  "data_root": "data\\nutrition5k",
+  "views": "overhead,side",
+  "val_fraction": "0.1",
+  "synthetic": "False",
+  "backbone": "mobilenet_v3_small",
+  "no_pretrained": "False",
+  "img_size": "224",
+  "epochs": "30",
+  "batch_size": "64",
+  "lr": "0.001",
+  "weight_decay": "0.0001",
+  "load_threads": "8",
+  "amp": "False",
+  "train_fraction": "1.0",
+  "device": "auto",
+  "out": "runs\\seed1",
+  "seed": "1"
+}
