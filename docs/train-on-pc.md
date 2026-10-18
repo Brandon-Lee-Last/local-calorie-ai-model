@@ -50,11 +50,11 @@ python -m calorie_model.bench
 ```
 
 Times a training step on random data for every combination of cuDNN autotuning,
-channels-last layout and mixed precision, plus the GPU augmentation on its own. If
-one row is much faster than the one training uses (`cudnn.benchmark True`,
-`channels_last True`, `amp True`), paste the table and the defaults can be changed.
-A first one-epoch run took 76 s on an RTX 3060 (about 220 images/s), which is
-slower than a 3060 should manage for a model this small.
+channels-last layout and mixed precision, plus the GPU augmentation on its own. On an
+RTX 3060 it showed channels-last making training about 5x slower (190-240 ms per step
+vs 42 ms) and mixed precision giving no speedup, so both are off by default now
+(mixed precision is opt-in with `--amp`). That puts a 30-epoch run at roughly six
+minutes (estimate, not yet re-measured).
 
 ## 4. Train two runs and compare
 
@@ -64,7 +64,7 @@ python -m calorie_model.train --views overhead,side --out runs/overhead_plus_sid
 ```
 
 Defaults: MobileNetV3-Small, ImageNet-pretrained (downloaded on first use), 224 px,
-30 epochs, batch 64, mixed precision. Every image is decoded once at startup into
+30 epochs, batch 64, fp32. Every image is decoded once at startup into
 GPU memory (about 3.5 GB, roughly a minute; `--load-threads` sets the decoding
 threads) and augmented on the GPU, so there are no DataLoader worker processes.
 That replaced an earlier version that managed only ~82 images/s and crashed with
@@ -76,6 +76,20 @@ Each run writes `best.pt`, `history.json` and `test_metrics.json` in its folder.
 The end of the log shows the test table: overall, per view type, and the
 `baseline_median` row (always guess the training median). A real result must
 beat that baseline clearly (about 185 kcal MAE on the full test set).
+
+### More experiments (each takes minutes)
+
+Compare runs on the `view_overhead` row (or the same view in both), not on `all`:
+different runs can have different test sets. Seed-to-seed noise is real, so a gap of a
+few kcal between single runs means nothing.
+
+```bash
+python -m calorie_model.train --seed 1 --out runs/seed1                        # noise: repeat with seeds 1, 2
+python -m calorie_model.train --backbone mobilenet_v3_large --out runs/large    # bigger model (12.8 MB fp32)
+python -m calorie_model.train --epochs 60 --out runs/long                       # longer schedule
+python -m calorie_model.train --train-fraction 0.25 --out runs/frac25           # learning curve: 25%, 50%, 100%
+python -m calorie_model.train --train-fraction 0.5  --out runs/frac50           # of the training dishes
+```
 
 ## 5. What to send back
 

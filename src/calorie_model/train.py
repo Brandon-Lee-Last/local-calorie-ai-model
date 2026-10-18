@@ -78,7 +78,11 @@ def make_datasets(args: argparse.Namespace) -> tuple[Dataset, Dataset, Dataset]:
         size = args.img_size
         return SyntheticDataset(64, size, 0), SyntheticDataset(32, size, 1), SyntheticDataset(32, size, 2)
     kw = dict(img_size=args.img_size, views=tuple(args.views.split(",")), val_fraction=args.val_fraction)
-    return tuple(Nutrition5kDataset(args.data_root, split, **kw) for split in ("train", "val", "test"))
+    return (
+        Nutrition5kDataset(args.data_root, "train", train_fraction=args.train_fraction, **kw),
+        Nutrition5kDataset(args.data_root, "val", **kw),
+        Nutrition5kDataset(args.data_root, "test", **kw),
+    )
 
 
 def make_batches(ds: Dataset, args: argparse.Namespace, device: torch.device, train: bool = False) -> Batches:
@@ -104,7 +108,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--lr", type=float, default=1e-3)
     p.add_argument("--weight-decay", type=float, default=1e-4)
     p.add_argument("--load-threads", type=int, default=min(8, os.cpu_count() or 1), help="threads used to decode images at startup")
-    p.add_argument("--no-amp", action="store_true", help="disable mixed precision on CUDA")
+    p.add_argument("--amp", action="store_true", help="mixed precision on CUDA (no speedup was measured on an RTX 3060)")
+    p.add_argument("--train-fraction", type=float, default=1.0, help="use only this share of the training dishes (learning curves)")
     p.add_argument("--device", default="auto")
     p.add_argument("--out", type=Path, default=Path("runs/default"))
     p.add_argument("--seed", type=int, default=0)
@@ -122,10 +127,9 @@ def main(argv: list[str] | None = None) -> None:
     )
 
     model = NutritionNet(args.backbone, pretrained=not args.no_pretrained).to(device)
-    use_amp = device.type == "cuda" and not args.no_amp
+    use_amp = device.type == "cuda" and args.amp
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True  # input sizes are fixed, so autotuning pays off
-        model = model.to(memory_format=torch.channels_last)
     print(f"{args.backbone}: {count_parameters(model) / 1e6:.2f}M params, device={device}, amp={use_amp}")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
@@ -145,8 +149,6 @@ def main(argv: list[str] | None = None) -> None:
         epoch_start = time.time()
         running, steps = 0.0, 0
         for x, y in train_batches:
-            if device.type == "cuda":
-                x = x.contiguous(memory_format=torch.channels_last)
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 pred = model(x)
             loss = (criterion(pred.float(), y) * weights).mean()

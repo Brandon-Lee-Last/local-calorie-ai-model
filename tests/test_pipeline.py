@@ -348,3 +348,29 @@ def test_bench_runs_on_cpu(capsys):
     bench_main(["--device", "cpu", "--batch-size", "4", "--img-size", "64", "--steps", "1"])
     out = capsys.readouterr().out
     assert "augmentation alone" in out and "img/s" in out
+
+
+def test_train_fraction_keeps_fewer_dishes_and_never_touches_val_or_test(tmp_path):
+    import csv
+
+    _fake_cache(tmp_path)
+    # extend the fake cache to 20 train dishes so a fraction is meaningful
+    rows = list(csv.reader(open(tmp_path / "index.csv")))
+    labels = list(csv.reader(open(tmp_path / "labels.csv")))
+    for i in range(10, 25):
+        dish = f"dish_{i}"
+        (tmp_path / "cache" / dish).mkdir()
+        Image.new("RGB", (64, 48)).save(tmp_path / "cache" / dish / "overhead.jpg")
+        rows.append([dish, "train", "overhead", f"cache/{dish}/overhead.jpg"])
+        labels.append([dish, "300", "250", "10", "40", "12"])
+    csv.writer(open(tmp_path / "index.csv", "w", newline="")).writerows(rows)
+    csv.writer(open(tmp_path / "labels.csv", "w", newline="")).writerows(labels)
+
+    kw = dict(img_size=IMG, views=("overhead",), val_fraction=0.2)
+    full = Nutrition5kDataset(tmp_path, "train", **kw)
+    half = Nutrition5kDataset(tmp_path, "train", train_fraction=0.5, **kw)
+    dishes = lambda ds: {p.parent.name for p, _ in ds.samples}  # noqa: E731
+    assert len(half) == round(len(full) * 0.5) and dishes(half) < dishes(full)
+    assert dishes(half) == dishes(Nutrition5kDataset(tmp_path, "train", train_fraction=0.5, **kw))  # deterministic
+    for split in ("val", "test"):  # unaffected
+        assert len(Nutrition5kDataset(tmp_path, split, train_fraction=0.1, **kw)) == len(Nutrition5kDataset(tmp_path, split, **kw))

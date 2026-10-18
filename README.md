@@ -7,10 +7,10 @@ phone.
 Target: **Android**, inside a **React Native / Expo** app (see
 [docs/android-expo.md](docs/android-expo.md)).
 
-> Status: v0 scaffold. The train → export → inference pipeline runs end to end
-> and is tested (`pytest`). The TFLite export converts and matches PyTorch to
-> ~4e-6 when run on a desktop CPU. **No real model has been trained yet**, so
-> there are no accuracy numbers, and nothing has been run on a phone.
+> Status: first real results exist (see **Results so far**). On the official Nutrition5k
+> test dishes the model's calorie error is roughly 60-70% lower than always guessing
+> the median. The TFLite export converts and matches PyTorch to ~4e-6 on a desktop
+> CPU. Nothing has been run on a phone, and none of this is tested on phone photos.
 
 ## Approach (v0)
 
@@ -71,7 +71,7 @@ src/calorie_model/
   model.py          NutritionNet, target order and scales
   prepare_data.py   download Nutrition5k over HTTPS, build a compact 256px image cache
   data.py           cached-dataset loader (train/val/test), augmentations, synthetic data
-  train.py          training loop (AdamW + OneCycle, AMP), val split, final test report + baseline
+  train.py          training loop (AdamW + OneCycle), val split, final test report + baseline
   export.py         checkpoint -> ONNX (+ parity check, optional int8)
   export_tflite.py  checkpoint -> .tflite via litert-torch (+ parity check)
   predict.py        run an ONNX model on one image, print JSON
@@ -113,6 +113,31 @@ next to a baseline that always predicts the training median.
 | Food-101 and larger food-class sets | v1 classifier for broad coverage | Licences vary per dataset and have **not** been checked yet; do that before training on any of them. |
 | USDA FoodData Central / Open Food Facts | per-100 g nutrient tables for the v1 lookup | Licence terms to be confirmed. |
 
+## Results so far
+
+MobileNetV3-Small, ImageNet-pretrained, 224 px, 30 epochs, one run each (seed 0), trained
+on an RTX 3060. MAE = mean absolute error; the baseline always guesses the training median.
+
+| Run | Evaluated on | Calorie MAE | Mass MAE | Baseline calorie MAE |
+|---|---|---|---|---|
+| overhead only (2,689 train images) | 507 overhead test photos | **52.3 kcal (20.5%)** | 35.6 g | 169.7 kcal |
+| overhead + side (16,969 train images) | the same 507 overhead photos | **52.7 kcal (20.6%)** | 34.7 g | 169.7 kcal |
+| overhead + side | ~2,600 side-camera test frames | **76.2 kcal (29.9%)** | 45.9 g | not shown |
+| overhead + side | all 3,110 test images | 72.4 kcal (28.4%) | 44.1 g | 185.6 kcal |
+
+How to read this:
+
+- **Compare like with like.** The overhead-only and overhead+side models should be compared on the
+  same 507 overhead photos (rows 1 and 2): 52.3 vs 52.7 kcal. That is no measurable difference, and
+  with one run each a gap this small is noise. Adding the side frames did not help or hurt overhead
+  accuracy; it lets the model handle side views at all. The "all images" row is a different, harder
+  test set (it includes side frames), so it cannot be compared with the overhead-only run.
+- **Validation looks better than test** (about 45 vs 72 kcal for the overhead+side run). Trust the
+  test number. A likely cause is repeated menu items making held-out training dishes easier than the
+  official test dishes, but that is a guess, not checked.
+- **These are cafeteria camera-rig photos, not phone photos.** How the model does on real phone photos
+  is unknown and is the most important thing still to measure.
+
 ## Limitations to be honest about
 
 - **A single photo cannot determine calories exactly.** Portion size, depth,
@@ -137,10 +162,9 @@ next to a baseline that always predicts the training median.
 
 ## Roadmap
 
-1. **Train v0** on Nutrition5k (`docs/train-on-pc.md`). Run overhead-only vs
-   overhead+side and compare on the official test split. Reference point: always
-   guessing the training median calories is off by **185 kcal on average (73% of
-   the mean)** on the 709 official test dishes, so a trained model has to beat that.
+1. **Done: train v0** (see Results so far). Still to do: repeat with other seeds to learn the run-to-run
+   noise, try `mobilenet_v3_large`, and run the learning curve (`--train-fraction`) to see whether more
+   dishes would keep helping. Commands are in `docs/train-on-pc.md`.
 2. **Measure whether depth is worth it.** Nutrition5k includes overhead depth for
    a subset of dishes. Train an RGB-D variant and compare against RGB-only on the
    same dishes before building any depth capture in the app (Android depth

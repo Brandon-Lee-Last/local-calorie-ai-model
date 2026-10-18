@@ -46,7 +46,8 @@ class Nutrition5kDataset(Dataset):
     ``split`` is ``train``, ``val`` or ``test``. ``test`` is the official test split.
     ``val`` is a fixed ``val_fraction`` of the *dishes* in the training pool, held
     out so that different views of one dish never straddle train and val.
-    ``views`` selects overhead photos, side-angle frames or both.
+    ``views`` selects overhead photos, side-angle frames or both. ``train_fraction``
+    keeps only that share of the training dishes (never of val or test).
     """
 
     def __init__(
@@ -57,6 +58,7 @@ class Nutrition5kDataset(Dataset):
         views: tuple[str, ...] = ("overhead", "side"),
         val_fraction: float = 0.1,
         seed: int = 0,
+        train_fraction: float = 1.0,
     ) -> None:
         if split not in ("train", "val", "test"):
             raise ValueError("split must be 'train', 'val' or 'test'")
@@ -74,6 +76,9 @@ class Nutrition5kDataset(Dataset):
             n_val = max(1, round(len(dishes) * val_fraction)) if val_fraction > 0 and len(dishes) > 1 else 0
             val = set(random.Random(seed).sample(dishes, n_val))
             keep = val if split == "val" else keep - val
+            if split == "train" and train_fraction < 1.0:  # fewer distinct dishes, for learning curves
+                n_keep = max(1, round(len(keep) * train_fraction))
+                keep = set(random.Random(seed + 1).sample(sorted(keep), n_keep))
 
         self.samples = [
             (root / r["path"], labels[r["dish_id"]]) for r in rows if r["dish_id"] in keep and r["view"] in views
