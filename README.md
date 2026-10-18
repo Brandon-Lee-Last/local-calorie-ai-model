@@ -165,15 +165,41 @@ protein errors are in each run's `test_metrics.json` and have not been looked at
   the dishes should lower it by about 14%. That comes from two points; the shape beyond them is
   unknown, and there are only 4,297 training dishes, so going further needs new data.
 
+### Food / not-food results
+
+First full run: Nutrition5k + Open Images (34,969 training images), MobileNetV3-Small, 30 epochs, one seed,
+RTX 3060 (about 30-45 s per epoch). Checked on 3,000 Open Images photos from the dataset's validation subset,
+which were never in training. Accepted as food if the probability is at least 0.5.
+
+| | |
+|---|---|
+| Real food photos accepted | 91.5% (1,000 photos) |
+| Non-food photos rejected | 96.5% overall (2,000 photos) |
+| ... dogs and cats | 98.8% rejected (500 photos) |
+| ... people | 98.2% rejected (500 photos) |
+| ... everyday scenes | 94.5% rejected (1,000 photos) |
+| Nutrition5k test photos recognised as food | 100% |
+| AUC | 0.983 |
+| Threshold 0.2 -> 0.8 | food accepted 92.7% -> 89.7%, non-food rejected 95.8% -> 97.1% |
+
+- The threshold barely matters (the model is confident), so 0.5 stays.
+- 8.5% of "food" photos are turned away. Some may be label noise (Open Images tags such as "Cuisine" or
+  "Fruit" also cover images that are not meals), but I have not looked at which ones, so that is a guess.
+  The app's "Estimate anyway" button covers false rejections.
+- **Cost to the nutrition outputs:** calorie error on all test images is 77.5 kcal, against 72.4 and 74.1
+  for the two earlier runs without the food output (overhead photos 53.5 vs about 52.8; side frames 82.1 vs
+  about 77.3). Roughly 5% worse, mostly on the rig's side frames. One run, so part may be noise.
+- Not yet tested on phone photos. That is the test that matters; use `check_photos`.
+
 ## Known gap: it will "estimate" anything
 
 The first model (v0) was trained only on food, so a photo of a dog still gets five confident-looking
 numbers (a real phone test returned about 200 kcal). The code now has a food / not-food output to fix this:
 a sixth output, the probability the photo shows food, trained on Nutrition5k plus about 22,000 Open Images
 photos (real-world food, and non-food including dogs, cats and people). The app shows "this doesn't look
-like food" when it is low. **This is built and tested on tiny samples but not yet trained at full size**:
-see `docs/train-on-pc.md` ("Teaching the model what is NOT food"). Until a model with the food output is
-trained and shipped in the app, the app has no way to refuse a non-food photo.
+like food" when it is low. A first full-size run worked (see "Food / not-food results" below); the model
+is not yet converted and shipped in the app, so until it is, the app still has no way to refuse a non-food
+photo. See `docs/train-on-pc.md` ("Teaching the model what is NOT food").
 
 ## Limitations to be honest about
 

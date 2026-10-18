@@ -105,13 +105,13 @@ python -m calorie_model.prepare_openimages --out data/openimages
 python -m calorie_model.train --openimages-root data/openimages --out runs/gate
 ```
 
-* **Download:** about 22,000 images through Amazon's public mirror of Open Images, plus ~250 MB of label
-  files; about 0.7 GB kept on disk afterwards. In my test it fetched ~50 images/s (about 10 minutes for
-  everything, plus a minute or two of reading the label files); your connection decides. Safe to Ctrl+C
+* **Download:** about 23,000 images through Amazon's public mirror of Open Images, plus ~250 MB of label
+  files; about 0.7 GB kept on disk afterwards. In my test it fetched ~50 images/s, but on a real run from a
+  home connection it managed about 7 images/s and took about 54 minutes; plan for that. Safe to Ctrl+C
   and re-run. Quick test run: add `--scale 0.02`.
 * **Training:** about 35,000 images go into GPU memory (roughly 5.5 GB; fits a 12 GB card). If it runs out
   of GPU memory, close other GPU programs, or add `--views overhead` to use far fewer Nutrition5k images.
-  Epoch time is not measured yet; I would guess under a minute.
+  Measured: about 30-45 s per epoch after a 97 s startup, so a 30-epoch run takes about 20 minutes.
 * **The result block to read** (printed at the end, under the TEST table):
   `food accepted` (real food photos it lets through), `non-food rejected` (photos it turns away, with
   separate lines for animals, people and everything else), the Nutrition5k photos recognised as food, and a
