@@ -22,6 +22,7 @@ from torch.utils.data import Dataset
 
 # RGB -> YIQ; hue jitter is a rotation of the (I, Q) plane.
 _YIQ = torch.tensor([[0.299, 0.587, 0.114], [0.596, -0.274, -0.322], [0.211, -0.523, 0.312]])
+_YIQ_INV = torch.linalg.inv(_YIQ)  # constant: keep the matrix solve out of the per-batch path
 
 
 def load_bank(ds: Dataset, device: torch.device | str, threads: int = 8) -> tuple[torch.Tensor, torch.Tensor]:
@@ -102,8 +103,7 @@ def augment(x: torch.Tensor, p: dict[str, torch.Tensor]) -> torch.Tensor:
     rot[:, 0, 0] = 1
     rot[:, 1, 1], rot[:, 1, 2] = phi.cos(), -phi.sin()
     rot[:, 2, 1], rot[:, 2, 2] = phi.sin(), phi.cos()
-    yiq = _YIQ.to(x.device)
-    mix = torch.linalg.inv(yiq) @ rot @ yiq
+    mix = _YIQ_INV.to(x.device) @ rot @ _YIQ.to(x.device)
     return torch.einsum("bij,bjhw->bihw", mix, x).clamp(0, 1)
 
 

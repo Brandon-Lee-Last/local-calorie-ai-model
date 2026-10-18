@@ -124,6 +124,7 @@ def main(argv: list[str] | None = None) -> None:
     model = NutritionNet(args.backbone, pretrained=not args.no_pretrained).to(device)
     use_amp = device.type == "cuda" and not args.no_amp
     if device.type == "cuda":
+        torch.backends.cudnn.benchmark = True  # input sizes are fixed, so autotuning pays off
         model = model.to(memory_format=torch.channels_last)
     print(f"{args.backbone}: {count_parameters(model) / 1e6:.2f}M params, device={device}, amp={use_amp}")
 

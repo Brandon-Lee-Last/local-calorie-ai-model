@@ -43,7 +43,20 @@ python -m calorie_model.prepare_data --out data/nutrition5k
 * Prints the final image counts per view. Expect on the order of 20k images.
 * Overhead photos only (much faster, 1.5 GB): add `--views overhead`.
 
-## 3. Train two runs and compare
+## 3. Optional: one-minute speed check
+
+```bash
+python -m calorie_model.bench
+```
+
+Times a training step on random data for every combination of cuDNN autotuning,
+channels-last layout and mixed precision, plus the GPU augmentation on its own. If
+one row is much faster than the one training uses (`cudnn.benchmark True`,
+`channels_last True`, `amp True`), paste the table and the defaults can be changed.
+A first one-epoch run took 76 s on an RTX 3060 (about 220 images/s), which is
+slower than a 3060 should manage for a model this small.
+
+## 4. Train two runs and compare
 
 ```bash
 python -m calorie_model.train --views overhead      --out runs/overhead_only
@@ -64,7 +77,7 @@ The end of the log shows the test table: overall, per view type, and the
 `baseline_median` row (always guess the training median). A real result must
 beat that baseline clearly (about 185 kcal MAE on the full test set).
 
-## 4. What to send back
+## 5. What to send back
 
 Paste the final `TEST (...)` table from both runs. If you want the TFLite file
 made, push the checkpoint on a separate branch (checkpoints are git-ignored, so

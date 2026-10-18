@@ -340,3 +340,11 @@ def test_load_bank_matches_dataset_images_exactly(tmp_path):
     images, targets = load_bank(ds, "cpu", threads=2)
     assert images.dtype == torch.uint8 and images.shape == (len(ds), 3, IMG, IMG)
     assert torch.equal(images[3].float() / 255, ds[3][0]) and torch.equal(targets, ds.targets())
+
+
+def test_bench_runs_on_cpu(capsys):
+    from calorie_model.bench import main as bench_main
+
+    bench_main(["--device", "cpu", "--batch-size", "4", "--img-size", "64", "--steps", "1"])
+    out = capsys.readouterr().out
+    assert "augmentation alone" in out and "img/s" in out
