@@ -9,8 +9,9 @@ Target: **Android**, inside a **React Native / Expo** app (see
 
 > Status: first real results exist (see **Results so far**). On the official Nutrition5k
 > test dishes the model's calorie error is roughly 60-70% lower than always guessing
-> the median. The TFLite export converts and matches PyTorch to ~4e-6 on a desktop
-> CPU. Nothing has been run on a phone, and none of this is tested on phone photos.
+> the median. A trained model is exported as `models/nutrition_v0.tflite` (4.45 MB, see its model
+> card); it matches PyTorch to under 0.001 kcal/g on 260 real photos on a desktop CPU. Nothing has
+> been run on a phone, and none of this is tested on phone photos.
 
 ## Approach (v0)
 

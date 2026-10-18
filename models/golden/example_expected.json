@@ -1,0 +1,20 @@
+{
+  "image_224": "example_224.png",
+  "image_256_source": "example_256.jpg",
+  "dish_id": "dish_1561662869",
+  "expected": {
+    "calories": 349.32,
+    "mass": 234.2,
+    "fat": 10.79,
+    "carb": 8.59,
+    "protein": 49.93
+  },
+  "true_label": {
+    "calories": 284.35,
+    "mass": 192.0,
+    "fat": 9.24,
+    "carb": 10.28,
+    "protein": 38.79
+  },
+  "note": "expected = output of models/nutrition_v0.tflite on example_224.png (RGB uint8, 224x224). Image from Nutrition5k (CC BY 4.0, Google Research)."
+}

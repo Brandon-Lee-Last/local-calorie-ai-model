@@ -4,6 +4,14 @@
 > README and the model contract in this repo. Treat the code as a sketch to
 > check against the library's current README, not as a verified integration.
 
+## The model file
+
+`models/nutrition_v0.tflite` (4.45 MB) with `models/MODEL_CARD.md` (contract, training, accuracy,
+limits) and `models/golden/` (a photo plus its expected output). Copy the `.tflite` into your Expo
+app's assets. First thing to do in the app: run the golden photo through the model and confirm it
+returns the values in `golden/example_expected.json`. That checks loading, tensor layout and output
+order before you try any real photo.
+
 ## Model contract
 
 Checked by converting a checkpoint with `export_tflite` and inspecting the file
