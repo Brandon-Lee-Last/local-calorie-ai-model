@@ -8,6 +8,8 @@ App-facing contract (shared with the TFLite export):
     input   "image"      uint8   (N, S, S, 3)  RGB, NHWC, raw 0-255 pixels
     output  "nutrition"  float32 (N, 5)        kcal, g mass, g fat, g carb, g protein
                                                (order: calorie_model.TARGETS)
+                         or (N, 6) when the model has the food head: the same five, then the
+                         probability (0-1) that the photo shows food (calorie_model.OUTPUT_NAMES)
 
 Scaling to [0, 1], ImageNet normalisation and the NHWC->NCHW transpose all
 happen inside the graph, so the app only resizes to S x S and hands over bytes.
@@ -36,12 +38,16 @@ class DeployModel(nn.Module):
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         # Cast before permuting: litert-torch cannot lower permute on uint8 tensors.
         x = image.float().permute(0, 3, 1, 2) / 255.0
-        return self.net(x) * self.scale
+        out = self.net(x)
+        values = out[:, : len(TARGETS)] * self.scale
+        if not self.net.food_head:
+            return values
+        return torch.cat([values, torch.sigmoid(out[:, len(TARGETS) :])], dim=1)
 
 
 def load_checkpoint(path: str | Path) -> tuple[NutritionNet, int]:
     ckpt = torch.load(path, map_location="cpu", weights_only=True)
-    net = NutritionNet(ckpt["backbone"], pretrained=False)
+    net = NutritionNet(ckpt["backbone"], pretrained=False, food_head=ckpt.get("food_head", False))
     net.load_state_dict(ckpt["state_dict"])
     return net.eval(), ckpt["img_size"]
 

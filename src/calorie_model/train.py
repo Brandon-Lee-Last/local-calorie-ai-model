@@ -1,15 +1,21 @@
-"""Train the nutrition regressor.
+"""Train the nutrition regressor, and optionally a food / not-food output.
 
     python -m calorie_model.prepare_data --out data/nutrition5k
     python -m calorie_model.train --data-root data/nutrition5k --epochs 30
+
+    # With the food / not-food output, so a photo of a dog is not given calories:
+    python -m calorie_model.prepare_openimages --out data/openimages
+    python -m calorie_model.train --data-root data/nutrition5k --openimages-root data/openimages
+
     python -m calorie_model.train --synthetic --epochs 2 --no-pretrained   # smoke test, no data needed
 
 All images are decoded once into memory on the training device and augmented there
 (see ``batches.py``), so there are no DataLoader worker processes.
 
-The best epoch is chosen on a validation split carved out of the training dishes.
-The official test split is evaluated once, at the end, next to a trivial baseline
-(always predict the training median), so the numbers can be put in context.
+Only photos with nutrition labels train the calorie/macro outputs; every photo trains the food output.
+The best epoch is chosen on a validation split carved out of the training data. The official
+Nutrition5k test split is evaluated once, at the end, next to a trivial baseline (always predict the
+training median); the food output is checked on held-out Open Images photos it never saw.
 """
 from __future__ import annotations
 
@@ -18,18 +24,22 @@ import json
 import os
 import time
 from collections.abc import Iterable
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import torch
+import torch.nn.functional as F
 from torch import nn
 from torch.utils.data import Dataset
 
 from .batches import Batches, load_bank
-from .data import Nutrition5kDataset, SyntheticDataset
+from .data import Nutrition5kDataset, OpenImagesDataset, SyntheticDataset
 from .model import TARGETS, NutritionNet, count_parameters, scale_vector
 
 # Calories is the headline number, so it gets the largest loss weight.
 LOSS_WEIGHTS = {"calories": 2.0, "mass": 1.0, "fat": 1.0, "carb": 1.0, "protein": 1.0}
+FOOD_COL, MASK_COL = len(TARGETS), len(TARGETS) + 1  # target columns: food label, has-nutrition-labels
+THRESHOLDS = (0.2, 0.35, 0.5, 0.65, 0.8)
 
 
 def get_device(name: str) -> torch.device:
@@ -48,50 +58,119 @@ def _metrics(abs_err_sum: torch.Tensor, true_sum: torch.Tensor, n: int) -> dict[
     return metrics
 
 
+def roc_auc(scores: torch.Tensor, labels: torch.Tensor) -> float:
+    """Area under the ROC curve via ranks (ties are ranked arbitrarily, which is fine at this scale)."""
+    pos = labels > 0.5
+    n_pos, n_neg = int(pos.sum()), int((~pos).sum())
+    if n_pos == 0 or n_neg == 0:
+        return float("nan")
+    ranks = scores.argsort().argsort().float() + 1
+    return float((ranks[pos].sum() - n_pos * (n_pos + 1) / 2) / (n_pos * n_neg))
+
+
+def gate_metrics(probs: torch.Tensor, labels: torch.Tensor, threshold: float = 0.5) -> dict[str, float]:
+    """Food / not-food quality: accuracy, AUC, share of food accepted, share of non-food rejected."""
+    accepted, food = probs >= threshold, labels > 0.5
+    out = {"gate_n": float(len(labels)), "gate_acc": float((accepted == food).float().mean()), "gate_auc": roc_auc(probs, labels)}
+    if food.any():
+        out["food_recall"] = float(accepted[food].float().mean())
+    if (~food).any():
+        out["nonfood_rejected"] = float((~accepted[~food]).float().mean())
+    return out
+
+
+@torch.no_grad()
+def predict_food(model: nn.Module, batches: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device) -> tuple[torch.Tensor, torch.Tensor]:
+    """Food probability and true food label (CPU tensors) for every image in ``batches``."""
+    model.eval()
+    probs, labels = [], []
+    for x, y in batches:
+        probs.append(torch.sigmoid(model(x.to(device))[:, FOOD_COL]).cpu())
+        labels.append(y[:, FOOD_COL].cpu())
+    return torch.cat(probs), torch.cat(labels)
+
+
 @torch.no_grad()
 def evaluate(model: nn.Module, batches: Iterable[tuple[torch.Tensor, torch.Tensor]], device: torch.device) -> dict[str, float]:
-    """Per-target MAE in real units, plus calorie MAE as a percent of mean true calories."""
+    """Nutrition MAE in real units over the photos that have nutrition labels (plus calorie MAE as a
+    percent of mean true calories) and, if the model has a food output, food / not-food metrics over all photos."""
     model.eval()
     scale = scale_vector(device)
     abs_err = torch.zeros(len(TARGETS), device=device)
     true_sum = torch.zeros(len(TARGETS), device=device)
     n = 0
+    probs, labels = [], []
     for x, y in batches:
         x, y = x.to(device), y.to(device)
         pred = model(x)
-        abs_err += ((pred - y).abs() * scale).sum(0)
-        true_sum += (y * scale).sum(0)
-        n += x.shape[0]
-    return _metrics(abs_err.cpu(), true_sum.cpu(), n)
+        has = y[:, MASK_COL] > 0
+        if has.any():
+            abs_err += ((pred[has, :FOOD_COL] - y[has, :FOOD_COL]).abs() * scale).sum(0)
+            true_sum += (y[has, :FOOD_COL] * scale).sum(0)
+            n += int(has.sum())
+        if pred.shape[1] > FOOD_COL:
+            probs.append(torch.sigmoid(pred[:, FOOD_COL]).cpu())
+            labels.append(y[:, FOOD_COL].cpu())
+    metrics = _metrics(abs_err.cpu(), true_sum.cpu(), n) if n else {}
+    if probs:
+        metrics.update(gate_metrics(torch.cat(probs), torch.cat(labels)))
+    return metrics
 
 
 def baseline_metrics(train_targets: torch.Tensor, test_targets: torch.Tensor) -> dict[str, float]:
     """Same metrics for a model that always predicts the per-target training median."""
     scale = scale_vector()
-    median = train_targets.median(dim=0).values
-    abs_err = ((test_targets - median).abs() * scale).sum(0)
-    return _metrics(abs_err, (test_targets * scale).sum(0), len(test_targets))
+    median = train_targets[train_targets[:, MASK_COL] > 0][:, :FOOD_COL].median(dim=0).values
+    test = test_targets[test_targets[:, MASK_COL] > 0][:, :FOOD_COL]
+    return _metrics(((test - median).abs() * scale).sum(0), (test * scale).sum(0), len(test))
 
 
-def make_datasets(args: argparse.Namespace) -> tuple[Dataset, Dataset, Dataset]:
+def compute_loss(pred: torch.Tensor, y: torch.Tensor, weights: torch.Tensor, gate_weight: float) -> torch.Tensor:
+    """Nutrition loss over labelled photos only, plus the food / not-food loss over every photo."""
+    per_target = F.smooth_l1_loss(pred[:, :FOOD_COL], y[:, :FOOD_COL], reduction="none", beta=0.1) * weights
+    has = y[:, MASK_COL]
+    loss = (per_target.mean(1) * has).sum() / has.sum().clamp(min=1.0)
+    if pred.shape[1] > FOOD_COL:
+        loss = loss + gate_weight * F.binary_cross_entropy_with_logits(pred[:, FOOD_COL], y[:, FOOD_COL])
+    return loss
+
+
+@dataclass
+class Splits:
+    train: list[Dataset]
+    val: list[Dataset]
+    test: Dataset  # nutrition test set (Nutrition5k)
+    gate_test: OpenImagesDataset | None = field(default=None)  # held-out food / not-food photos
+
+
+def make_splits(args: argparse.Namespace) -> Splits:
     if args.synthetic:
         size = args.img_size
-        return SyntheticDataset(64, size, 0), SyntheticDataset(32, size, 1), SyntheticDataset(32, size, 2)
+        return Splits([SyntheticDataset(64, size, 0)], [SyntheticDataset(32, size, 1)], SyntheticDataset(32, size, 2))
     kw = dict(img_size=args.img_size, views=tuple(args.views.split(",")), val_fraction=args.val_fraction)
-    return (
-        Nutrition5kDataset(args.data_root, "train", train_fraction=args.train_fraction, **kw),
-        Nutrition5kDataset(args.data_root, "val", **kw),
-        Nutrition5kDataset(args.data_root, "test", **kw),
+    splits = Splits(
+        train=[Nutrition5kDataset(args.data_root, "train", train_fraction=args.train_fraction, **kw)],
+        val=[Nutrition5kDataset(args.data_root, "val", **kw)],
+        test=Nutrition5kDataset(args.data_root, "test", **kw),
     )
+    if args.openimages_root:
+        oi = dict(img_size=args.img_size, val_fraction=args.val_fraction)
+        splits.train.append(OpenImagesDataset(args.openimages_root, "train", **oi))
+        splits.val.append(OpenImagesDataset(args.openimages_root, "val", **oi))
+        splits.gate_test = OpenImagesDataset(args.openimages_root, "test", img_size=args.img_size)
+    return splits
 
 
-def make_batches(ds: Dataset, args: argparse.Namespace, device: torch.device, train: bool = False) -> Batches:
+def make_batches(ds: Dataset | list[Dataset], args: argparse.Namespace, device: torch.device, train: bool = False) -> Batches:
     images, targets = load_bank(ds, device, args.load_threads)
     return Batches(images, targets, args.batch_size, shuffle=train, augment_=train)
 
 
 def fmt(m: dict[str, float]) -> str:
-    return f"cal MAE {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  mass MAE {m['mae_mass']:.1f} g"
+    text = f"cal MAE {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  mass MAE {m['mae_mass']:.1f} g"
+    if "gate_acc" in m:
+        text += f"  | food/not-food acc {100 * m['gate_acc']:.1f}%"
+    return text
 
 
 def fmt_all(m: dict[str, float]) -> str:
@@ -100,11 +179,35 @@ def fmt_all(m: dict[str, float]) -> str:
     return f"cal {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  {others}"
 
 
+def pct(x: float) -> str:
+    return "n/a" if x != x else f"{100 * x:.1f}%"
+
+
+def gate_report(model: nn.Module, splits: Splits, test_batches: Batches, args: argparse.Namespace, device: torch.device) -> dict:
+    """Food / not-food quality on held-out Open Images photos, by group and at several thresholds."""
+    assert splits.gate_test is not None
+    probs, labels = predict_food(model, make_batches(splits.gate_test, args, device), device)
+    groups = splits.gate_test.groups
+    report: dict = {"images": len(labels), "overall": gate_metrics(probs, labels), "sweep": {}, "groups": {}}
+    for t in THRESHOLDS:
+        m = gate_metrics(probs, labels, t)
+        report["sweep"][f"{t:.2f}"] = {k: m[k] for k in ("food_recall", "nonfood_rejected") if k in m}
+    for g in sorted(set(groups)):
+        sel = torch.tensor([x == g for x in groups])
+        accepted = (probs[sel] >= 0.5).float().mean().item()
+        report["groups"][g] = {"images": int(sel.sum()), "accepted_as_food": accepted}
+    rig_probs, _ = predict_food(model, test_batches, device)  # Nutrition5k test photos are all food
+    report["nutrition5k_test_recognised_as_food"] = float((rig_probs >= 0.5).float().mean())
+    return report
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", type=Path, default=Path("data/nutrition5k"))
+    p.add_argument("--openimages-root", type=Path, default=None, help="add the food / not-food output, trained on this Open Images cache")
+    p.add_argument("--gate-weight", type=float, default=1.0, help="weight of the food / not-food loss")
     p.add_argument("--views", default="overhead,side", help="comma-separated: overhead, side")
-    p.add_argument("--val-fraction", type=float, default=0.1, help="share of training dishes held out for validation")
+    p.add_argument("--val-fraction", type=float, default=0.1, help="share of training data held out for validation")
     p.add_argument("--synthetic", action="store_true", help="use procedural data (pipeline smoke test)")
     p.add_argument("--backbone", default="mobilenet_v3_small")
     p.add_argument("--no-pretrained", action="store_true", help="skip ImageNet weights (no download)")
@@ -123,27 +226,29 @@ def main(argv: list[str] | None = None) -> None:
 
     torch.manual_seed(args.seed)
     device = get_device(args.device)
-    train_ds, val_ds, test_ds = make_datasets(args)
+    splits = make_splits(args)
     start = time.time()
-    train_batches = make_batches(train_ds, args, device, train=True)
-    val_batches, test_batches = make_batches(val_ds, args, device), make_batches(test_ds, args, device)
+    train_batches = make_batches(splits.train, args, device, train=True)
+    val_batches, test_batches = make_batches(splits.val, args, device), make_batches(splits.test, args, device)
+    n_train = sum(len(d) for d in splits.train)
     print(
-        f"images: {len(train_ds)} train, {len(val_ds)} val, {len(test_ds)} test "
-        f"(decoded into {device} memory in {time.time() - start:.0f}s)"
+        f"images: {n_train} train, {sum(len(d) for d in splits.val)} val, {len(splits.test)} test"
+        + (f", {len(splits.gate_test)} held-out food/not-food" if splits.gate_test else "")
+        + f" (decoded into {device} memory in {time.time() - start:.0f}s)"
     )
 
-    model = NutritionNet(args.backbone, pretrained=not args.no_pretrained).to(device)
+    food_head = splits.gate_test is not None
+    model = NutritionNet(args.backbone, pretrained=not args.no_pretrained, food_head=food_head).to(device)
     use_amp = device.type == "cuda" and args.amp
     if device.type == "cuda":
         torch.backends.cudnn.benchmark = True  # input sizes are fixed, so autotuning pays off
-    print(f"{args.backbone}: {count_parameters(model) / 1e6:.2f}M params, device={device}, amp={use_amp}")
+    print(f"{args.backbone}: {count_parameters(model) / 1e6:.2f}M params, device={device}, amp={use_amp}, food output={food_head}")
 
     opt = torch.optim.AdamW(model.parameters(), lr=args.lr, weight_decay=args.weight_decay)
     sched = torch.optim.lr_scheduler.OneCycleLR(
         opt, max_lr=args.lr, epochs=args.epochs, steps_per_epoch=len(train_batches)
     )
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
-    criterion = nn.SmoothL1Loss(reduction="none", beta=0.1)
     weights = torch.tensor([LOSS_WEIGHTS[t] for t in TARGETS], device=device)
 
     args.out.mkdir(parents=True, exist_ok=True)
@@ -157,7 +262,7 @@ def main(argv: list[str] | None = None) -> None:
         for x, y in train_batches:
             with torch.autocast(device_type=device.type, dtype=torch.float16, enabled=use_amp):
                 pred = model(x)
-            loss = (criterion(pred.float(), y) * weights).mean()
+            loss = compute_loss(pred.float(), y, weights, args.gate_weight)
             opt.zero_grad(set_to_none=True)
             scaler.scale(loss).backward()
             scaler.step(opt)
@@ -179,6 +284,7 @@ def main(argv: list[str] | None = None) -> None:
                     "state_dict": model.state_dict(),
                     "backbone": args.backbone,
                     "img_size": args.img_size,
+                    "food_head": food_head,
                     "metrics": metrics,
                 },
                 args.out / "best.pt",
@@ -188,9 +294,9 @@ def main(argv: list[str] | None = None) -> None:
 
     # Final, one-off test-set report with the best checkpoint.
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device, weights_only=True)["state_dict"])
-    report = {
+    report: dict = {
         "all": evaluate(model, test_batches, device),
-        "baseline_median": baseline_metrics(train_ds.targets(), test_ds.targets()),
+        "baseline_median": baseline_metrics(torch.cat([d.targets() for d in splits.train]), splits.test.targets()),
     }
     if not args.synthetic:
         for view in args.views.split(","):
@@ -200,10 +306,24 @@ def main(argv: list[str] | None = None) -> None:
                 continue
             report[f"view_{view}"] = evaluate(model, make_batches(view_ds, args, device), device)
             report[f"view_{view}"]["images"] = len(view_ds)
+    gate = gate_report(model, splits, test_batches, args, device) if food_head else None
+    if gate:
+        report["gate"] = gate
     (args.out / "test_metrics.json").write_text(json.dumps(report, indent=2))
-    print(f"\nTEST ({len(test_ds)} images)")
+
+    print(f"\nTEST ({len(splits.test)} images)")
     for name, m in report.items():
-        print(f"  {name:16s} {fmt_all(m)}")
+        if name != "gate":
+            print(f"  {name:16s} {fmt_all(m)}")
+    if gate:
+        o = gate["overall"]
+        print(f"\nFOOD / NOT-FOOD on {gate['images']} held-out Open Images photos (accepted as food if probability >= 0.5)")
+        print(f"  food accepted {pct(o.get('food_recall', float('nan')))}   non-food rejected {pct(o.get('nonfood_rejected', float('nan')))}   AUC {o['gate_auc']:.3f}")
+        for g, v in gate["groups"].items():
+            print(f"  {g:8s} {v['images']:5d} photos, accepted as food: {pct(v['accepted_as_food'])}")
+        print(f"  Nutrition5k test photos recognised as food: {pct(gate['nutrition5k_test_recognised_as_food'])}")
+        print("  threshold sweep (food accepted / non-food rejected): " + "  ".join(
+            f"{t}: {pct(v.get('food_recall', float('nan')))}/{pct(v.get('nonfood_rejected', float('nan')))}" for t, v in gate["sweep"].items()))
 
 
 if __name__ == "__main__":

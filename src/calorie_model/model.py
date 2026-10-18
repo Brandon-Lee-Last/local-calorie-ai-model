@@ -8,6 +8,8 @@ from torchvision import models
 
 # Output order of the regression head, and the units of each (kcal / grams).
 TARGETS = ("calories", "mass", "fat", "carb", "protein")
+# With the food head the model has one more output: the probability that the photo shows food.
+OUTPUT_NAMES = TARGETS + ("food",)
 
 # Fixed divisors so every output regresses values of roughly unit magnitude.
 # The network works in scaled units; multiply by these to get kcal / grams.
@@ -38,7 +40,7 @@ _BACKBONES = {
 
 
 class NutritionNet(nn.Module):
-    """Image in, five non-negative nutrition estimates out (in scaled units).
+    """Image in, five non-negative nutrition estimates out (in scaled units), plus an optional food logit.
 
     Input is a float tensor ``(B, 3, H, W)`` with RGB values in ``[0, 1]``.
     ImageNet normalisation happens inside the model so the app only has to
@@ -51,8 +53,10 @@ class NutritionNet(nn.Module):
         pretrained: bool = True,
         hidden: int = 256,
         dropout: float = 0.2,
+        food_head: bool = True,
     ) -> None:
         super().__init__()
+        self.food_head = food_head
         if backbone not in _BACKBONES:
             raise ValueError(f"unknown backbone {backbone!r}; choose from {sorted(_BACKBONES)}")
         ctor, weights, channels = _BACKBONES[backbone]
@@ -64,15 +68,20 @@ class NutritionNet(nn.Module):
             nn.Hardswish(),
             nn.Dropout(dropout),
         )
-        self.head = nn.Linear(hidden, len(TARGETS))
+        self.head = nn.Linear(hidden, len(TARGETS) + int(food_head))
         self.register_buffer("mean", torch.tensor(IMAGENET_MEAN).view(1, 3, 1, 1), persistent=False)
         self.register_buffer("std", torch.tensor(IMAGENET_STD).view(1, 3, 1, 1), persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = (x - self.mean) / self.std
         h = self.neck(self.pool(self.features(x)))
-        # softplus keeps every estimate non-negative.
-        return F.softplus(self.head(h))
+        out = self.head(h)
+        # softplus keeps every nutrition estimate non-negative.
+        values = F.softplus(out[:, : len(TARGETS)])
+        if not self.food_head:
+            return values
+        # Last column is the food LOGIT (apply a sigmoid for the probability); the rest are scaled values.
+        return torch.cat([values, out[:, len(TARGETS) :]], dim=1)
 
 
 def scale_vector(device: torch.device | str = "cpu") -> torch.Tensor:

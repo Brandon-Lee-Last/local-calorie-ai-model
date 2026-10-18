@@ -27,11 +27,21 @@ def load_rgb_uint8(path: str | Path, img_size: int) -> np.ndarray:
     """
     with Image.open(path) as im:
         resized = T.Resize((img_size, img_size))(im.convert("RGB"))
-    return np.asarray(resized, dtype=np.uint8)
+    return np.array(resized, dtype=np.uint8)  # a copy: PIL's buffer view is read-only
 
 
 def _scale() -> torch.Tensor:
     return torch.tensor([TARGET_SCALE[t] for t in TARGETS])
+
+
+# Training targets are TARGET_WIDTH wide: the five scaled nutrition values, then ``food`` (1 for a
+# food photo, 0 for anything else) and ``has_nutrition`` (1 if the five values are real labels). Food
+# photos without nutrition labels and non-food photos train only the food output.
+TARGET_WIDTH = len(TARGETS) + 2
+
+
+def with_gate(nutrition: torch.Tensor, food: float, has_nutrition: float) -> torch.Tensor:
+    return torch.cat([nutrition, torch.tensor([food, has_nutrition])])
 
 
 def read_labels(path: Path) -> dict[str, torch.Tensor]:
@@ -81,10 +91,65 @@ class Nutrition5kDataset(Dataset):
                 keep = set(random.Random(seed + 1).sample(sorted(keep), n_keep))
 
         self.samples = [
-            (root / r["path"], labels[r["dish_id"]]) for r in rows if r["dish_id"] in keep and r["view"] in views
+            (root / r["path"], with_gate(labels[r["dish_id"]], 1.0, 1.0))
+            for r in rows
+            if r["dish_id"] in keep and r["view"] in views
         ]
         if not self.samples:
             raise RuntimeError(f"no images for split {split!r}, views {views} under {root}; run prepare_data first")
+
+    def targets(self) -> torch.Tensor:
+        return torch.stack([t for _, t in self.samples])
+
+    def __len__(self) -> int:
+        return len(self.samples)
+
+    def __getitem__(self, i: int) -> tuple[torch.Tensor, torch.Tensor]:
+        path, target = self.samples[i]
+        with Image.open(path) as im:
+            return self.transform(im.convert("RGB")), target
+
+
+class OpenImagesDataset(Dataset):
+    """Food / not-food photos from the cache built by ``calorie_model.prepare_openimages``.
+
+    There are no nutrition labels, so these images train only the food output. ``split`` is
+    ``train``, ``val`` (a fixed share of the training pool) or ``test`` (the held-out Open Images
+    validation subset). ``groups`` optionally keeps only some of food / animal / person / other.
+    """
+
+    def __init__(
+        self,
+        root: str | Path,
+        split: str,
+        img_size: int = 224,
+        val_fraction: float = 0.1,
+        seed: int = 0,
+        groups: tuple[str, ...] | None = None,
+    ) -> None:
+        if split not in ("train", "val", "test"):
+            raise ValueError("split must be 'train', 'val' or 'test'")
+        root = Path(root)
+        self.transform = eval_transform(img_size)
+        with open(root / "index.csv", newline="", encoding="utf-8") as f:
+            rows = list(csv.DictReader(f))
+
+        pool = "test" if split == "test" else "train"
+        ids = sorted(r["image_id"] for r in rows if r["split"] == pool)
+        keep = set(ids)
+        if split != "test":
+            n_val = max(1, round(len(ids) * val_fraction)) if val_fraction > 0 and len(ids) > 1 else 0
+            val = set(random.Random(seed).sample(ids, n_val))
+            keep = val if split == "val" else keep - val
+
+        chosen = [r for r in rows if r["image_id"] in keep and (groups is None or r["group"] in groups)]
+        self.samples = [
+            (root / r["path"], with_gate(torch.zeros(len(TARGETS)), 1.0 if r["label"] == "food" else 0.0, 0.0))
+            for r in chosen
+        ]
+        self.groups = [r["group"] for r in chosen]
+        if not self.samples:
+            raise RuntimeError(f"no images for split {split!r} under {root}; run prepare_openimages first")
 
     def targets(self) -> torch.Tensor:
         return torch.stack([t for _, t in self.samples])
@@ -116,7 +181,7 @@ class SyntheticDataset(Dataset):
     @staticmethod
     def _target(r: float, g: float, b: float) -> torch.Tensor:
         # In scaled units: each output tracks one colour channel or a mix.
-        return torch.tensor([r, (r + g) / 2, g, b, (g + b) / 2])
+        return with_gate(torch.tensor([r, (r + g) / 2, g, b, (g + b) / 2]), 1.0, 1.0)
 
     def __len__(self) -> int:
         return len(self.params)

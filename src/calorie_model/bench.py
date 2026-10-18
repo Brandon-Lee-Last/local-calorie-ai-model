@@ -56,7 +56,7 @@ def main(argv: list[str] | None = None) -> None:
                 if device.type != "cuda" and (benchmark or channels_last or amp):
                     continue  # these options only apply on CUDA
                 torch.backends.cudnn.benchmark = benchmark
-                model = NutritionNet(pretrained=False).to(device)
+                model = NutritionNet(pretrained=False, food_head=False).to(device)  # step cost is the same either way
                 if channels_last:
                     model = model.to(memory_format=torch.channels_last)
                 xb = x.contiguous(memory_format=torch.channels_last) if channels_last else x

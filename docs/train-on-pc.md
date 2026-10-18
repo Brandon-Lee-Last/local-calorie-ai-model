@@ -91,6 +91,45 @@ python -m calorie_model.train --train-fraction 0.25 --out runs/frac25           
 python -m calorie_model.train --train-fraction 0.5  --out runs/frac50           # of the training dishes
 ```
 
+## Teaching the model what is NOT food (the "photo of a dog gets calories" fix)
+
+A model trained only on food photos has no idea what a non-food photo is: it still prints five confident
+numbers for a dog. This adds a sixth output, the probability that the photo shows food, trained on
+Nutrition5k plus about 22,000 Open Images photos: roughly 9,000 real-world food photos and 13,000 non-food
+photos (thousands of dogs, cats and people among them). The app then shows "this doesn't look like food"
+instead of calories.
+
+```bash
+git pull
+python -m calorie_model.prepare_openimages --out data/openimages
+python -m calorie_model.train --openimages-root data/openimages --out runs/gate
+```
+
+* **Download:** about 22,000 images through Amazon's public mirror of Open Images, plus ~250 MB of label
+  files; about 0.7 GB kept on disk afterwards. In my test it fetched ~50 images/s (about 10 minutes for
+  everything, plus a minute or two of reading the label files); your connection decides. Safe to Ctrl+C
+  and re-run. Quick test run: add `--scale 0.02`.
+* **Training:** about 35,000 images go into GPU memory (roughly 5.5 GB; fits a 12 GB card). If it runs out
+  of GPU memory, close other GPU programs, or add `--views overhead` to use far fewer Nutrition5k images.
+  Epoch time is not measured yet; I would guess under a minute.
+* **The result block to read** (printed at the end, under the TEST table):
+  `food accepted` (real food photos it lets through), `non-food rejected` (photos it turns away, with
+  separate lines for animals, people and everything else), the Nutrition5k photos recognised as food, and a
+  threshold sweep. You want both of the first two high (the sweep shows the trade-off: a higher cut-off
+  rejects more non-food but also turns away more real food). The nutrition numbers above it should stay
+  about where they were.
+* **Try your own photos**, the dog included. Make a folder of ~20 food photos and ~20 non-food photos taken
+  with your phone, then:
+  ```bash
+  python -m calorie_model.check_photos runs/gate/best.pt phone_photos
+  ```
+  It prints each photo's food probability and either `NOT FOOD` or the estimate, using the same resize as
+  the app. This is the test that matters: Open Images and Nutrition5k are not your phone.
+* **Then send the checkpoint** as in section 5, and I will convert it to TFLite and update the app.
+
+Photos used here are CC BY 2.0 (author and licence for each are in `data/openimages/index.csv`). Whether
+training on them needs more than attribution is a question for someone qualified; this is not legal advice.
+
 ## 5. What to send back
 
 Paste the final `TEST (...)` table from both runs. If you want the TFLite file

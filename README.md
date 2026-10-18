@@ -71,6 +71,8 @@ planned v1: classifier for per-gram nutrient density, regressor for portion.
 src/calorie_model/
   model.py          NutritionNet, target order and scales
   prepare_data.py   download Nutrition5k over HTTPS, build a compact 256px image cache
+  prepare_openimages.py  food / not-food photos from Open Images (CC BY 2.0) for the food output
+  check_photos.py   run a checkpoint on your own photos exactly as the app will
   data.py           cached-dataset loader (train/val/test), augmentations, synthetic data
   train.py          training loop (AdamW + OneCycle), val split, final test report + baseline
   export.py         checkpoint -> ONNX (+ parity check, optional int8)
@@ -111,6 +113,7 @@ next to a baseline that always predicts the training median.
 | Dataset | Use | Notes |
 |---|---|---|
 | Nutrition5k | v0 training: images + weighed calories/mass/macros | CC BY 4.0 per its README (commercial use allowed, cite the CVPR 2021 paper). Collected in a few California cafeterias, so expect bias. Bucket layout and the `rgb_{train,test}_ids.txt` split files are verified. 5,006 labelled dishes; only 3,490 have an overhead photo (1.45 GB). The side-angle videos (192 GB, up to 4 cameras per dish, many missing) are sampled: `prepare_data` fetches only the first ~1 MB of each and keeps one frame, giving ~4 images per dish. Those frames have a yellow cast and unusual angles, so they are more data, not phone-like data. |
+| Open Images (food / not-food) | the food output: real-world food photos and many kinds of non-food | Photos are CC BY 2.0 per the dataset's metadata (author and licence kept per image in `index.csv`); labels CC BY 4.0. About 22,000 photos: ~9k food, ~13k non-food (dogs, cats, people, everyday scenes). Labels are human-verified but not exhaustive, so a few "non-food" photos may contain unlabelled food; images with plates, bowls, drinks or kitchens but no food label are left out of both groups. Whether training on CC BY images needs more than attribution is a question for someone qualified. |
 | Food-101 and larger food-class sets | v1 classifier for broad coverage | Licences vary per dataset and have **not** been checked yet; do that before training on any of them. |
 | USDA FoodData Central / Open Food Facts | per-100 g nutrient tables for the v1 lookup | Licence terms to be confirmed. |
 
@@ -161,6 +164,16 @@ protein errors are in each run's `test_metrics.json` and have not been looked at
 - **More data:** halving the training dishes raised calorie error about 16% (85.2 vs ~73.3), so doubling
   the dishes should lower it by about 14%. That comes from two points; the shape beyond them is
   unknown, and there are only 4,297 training dishes, so going further needs new data.
+
+## Known gap: it will "estimate" anything
+
+The first model (v0) was trained only on food, so a photo of a dog still gets five confident-looking
+numbers (a real phone test returned about 200 kcal). The code now has a food / not-food output to fix this:
+a sixth output, the probability the photo shows food, trained on Nutrition5k plus about 22,000 Open Images
+photos (real-world food, and non-food including dogs, cats and people). The app shows "this doesn't look
+like food" when it is low. **This is built and tested on tiny samples but not yet trained at full size**:
+see `docs/train-on-pc.md` ("Teaching the model what is NOT food"). Until a model with the food output is
+trained and shipped in the app, the app has no way to refuse a non-food photo.
 
 ## Limitations to be honest about
 

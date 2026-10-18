@@ -9,9 +9,9 @@ import json
 from pathlib import Path
 
 from .data import load_rgb_uint8
-from .model import TARGETS
+from .model import OUTPUT_NAMES
 
-UNITS = {"calories": "kcal", "mass": "g", "fat": "g", "carb": "g", "protein": "g"}
+UNITS = {"calories": "kcal", "mass": "g", "fat": "g", "carb": "g", "protein": "g", "food": "probability"}
 
 
 def predict(model_path: str | Path, image_path: str | Path) -> dict[str, float]:
@@ -23,7 +23,7 @@ def predict(model_path: str | Path, image_path: str | Path) -> dict[str, float]:
         raise ValueError(f"expected a square static input size, got {(h, w)}")
     x = load_rgb_uint8(image_path, h)[None]
     out = sess.run(None, {"image": x})[0][0]
-    return {name: round(float(v), 1) for name, v in zip(TARGETS, out)}
+    return {name: round(float(v), 3 if name == "food" else 1) for name, v in zip(OUTPUT_NAMES, out)}
 
 
 def main(argv: list[str] | None = None) -> None:

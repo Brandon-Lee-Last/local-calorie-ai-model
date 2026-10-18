@@ -25,21 +25,33 @@ _YIQ = torch.tensor([[0.299, 0.587, 0.114], [0.596, -0.274, -0.322], [0.211, -0.
 _YIQ_INV = torch.linalg.inv(_YIQ)  # constant: keep the matrix solve out of the per-batch path
 
 
-def load_bank(ds: Dataset, device: torch.device | str, threads: int = 8) -> tuple[torch.Tensor, torch.Tensor]:
-    """Decode every image of ``ds`` once: uint8 ``(N, 3, S, S)`` images and ``(N, 5)`` targets on ``device``.
+def load_bank(
+    datasets: Dataset | list[Dataset], device: torch.device | str, threads: int = 8
+) -> tuple[torch.Tensor, torch.Tensor]:
+    """Decode every image once: uint8 ``(N, 3, S, S)`` images and their targets, on ``device``.
 
-    ``ds`` must return float images in [0, 1] from uint8 sources (so the round trip
-    to uint8 is exact) and provide ``targets()``.
+    Several datasets are concatenated into ONE preallocated tensor, filled in place, so peak memory
+    is the final bank plus one dataset's staging buffer (concatenating afterwards would need twice
+    the final size on the GPU). Datasets must return float images in [0, 1] from uint8 sources (so
+    the round trip to uint8 is exact) and provide ``targets()``.
     """
-    first, _ = ds[0]
-    images = torch.empty((len(ds), *first.shape), dtype=torch.uint8)
+    if isinstance(datasets, Dataset):
+        datasets = [datasets]
+    first, _ = datasets[0][0]
+    images = torch.empty((sum(len(ds) for ds in datasets), *first.shape), dtype=torch.uint8, device=device)
+    targets, offset = [], 0
+    for ds in datasets:
+        staging = torch.empty((len(ds), *first.shape), dtype=torch.uint8)
 
-    def fill(i: int) -> None:
-        images[i] = (ds[i][0] * 255).round().to(torch.uint8)
+        def fill(i: int, ds: Dataset = ds, staging: torch.Tensor = staging) -> None:
+            staging[i] = (ds[i][0] * 255).round().to(torch.uint8)
 
-    with ThreadPoolExecutor(max_workers=max(threads, 1)) as pool:
-        list(pool.map(fill, range(len(ds))))
-    return images.to(device), ds.targets().to(device)
+        with ThreadPoolExecutor(max_workers=max(threads, 1)) as pool:
+            list(pool.map(fill, range(len(ds))))
+        images[offset : offset + len(ds)].copy_(staging)
+        targets.append(ds.targets())
+        offset += len(ds)
+    return images, torch.cat(targets).to(device)
 
 
 def identity_params(b: int, device: torch.device | str = "cpu") -> dict[str, torch.Tensor]:
