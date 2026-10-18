@@ -1,8 +1,9 @@
 # Using the model in a React Native / Expo (Android) app
 
-> **Untested on a device.** This is assembled from the `react-native-fast-tflite`
-> README and the model contract in this repo. Treat the code as a sketch to
-> check against the library's current README, not as a verified integration.
+> **Untested on a device.** A working app now exists in the separate
+> [calorie-app](https://github.com/Brandon-Lee-Last/calorie-app) repo (branch `claude/expo-app-v0`);
+> use it instead of the sketch below. It type-checks against the real library types and bundles,
+> but has not yet been built or run on an Android phone.
 
 ## The model file
 
@@ -46,27 +47,29 @@ native module, so I expect Expo Go cannot load it (its README does not say).
 `metro.config.js`: add `'tflite'` to `resolver.assetExts` so
 `require('./assets/nutrition.tflite')` works.
 
-## Sketch
+## Sketch (checked against react-native-fast-tflite 3.0.1's types)
 
 ```ts
 import { loadTensorflowModel } from 'react-native-fast-tflite';
 
-const model = await loadTensorflowModel(require('./assets/nutrition.tflite'), 'android-gpu');
-// rgb: Uint8Array of length 224 * 224 * 3, RGB interleaved (R,G,B,R,G,B,...)
-const [out] = await model.run([rgb]);
-const [calories, mass, fat, carb, protein] = new Float32Array(out);
+// delegates is a required ARRAY: [] = plain CPU, ['android-gpu'] = GPU.
+const model = await loadTensorflowModel(require('./assets/nutrition_v0.tflite'), []);
+// rgb: Uint8Array of length 224 * 224 * 3, RGB interleaved. Pass its ArrayBuffer (exactly that size).
+const [out] = await model.run([rgb.buffer]);          // run(input: ArrayBuffer[]): Promise<ArrayBuffer[]>
+const [calories, mass, fat, carb, protein] = new Float32Array(out!);
 ```
 
-Delegates documented by the library: `'android-gpu'`, `'nnapi'` (deprecated on
-Android 15 per its README); omit the argument for plain CPU. Check the README for
-the exact input/output typing before relying on the sketch above.
+`model.inputs` and `model.outputs` report each tensor's name, data type and shape, which the app uses to
+check the loaded file against the contract. Delegates in the types: `'android-gpu'`, `'nnapi'`,
+`'core-ml'`, `'metal'`. The library's README says NNAPI is deprecated on Android 15 and recommends the
+GPU delegate; the model is small enough that plain CPU may be fast enough.
 
 ## Open spikes (not yet researched)
 
-1. **Pixels from a photo.** Getting a still photo (camera or gallery) resized to
-   224x224 and into a raw RGB byte array inside Expo has not been investigated.
-   Candidates to evaluate: VisionCamera frame processors, or decoding a resized
-   image in JS or native code.
+1. **Pixels from a photo.** Implemented in the app repo (`src/imaging/`): `expo-image-manipulator` decodes
+   (capped at 1024 px) and squashes to 224x224, saves a lossless PNG, and a pure-JavaScript decoder
+   (`fast-png`) turns it into raw RGB. The JavaScript decoding is tested to match PIL exactly on the golden
+   photo; the manipulator step has not run on a device.
 2. **Resize parity.** Training uses PIL bilinear resizing. Run the same photos
    through `python -m calorie_model.predict` and through the app; if outputs
    differ noticeably, either match the resampler in training or add
