@@ -128,15 +128,38 @@ on an RTX 3060. MAE = mean absolute error; the baseline always guesses the train
 How to read this:
 
 - **Compare like with like.** The overhead-only and overhead+side models should be compared on the
-  same 507 overhead photos (rows 1 and 2): 52.3 vs 52.7 kcal. That is no measurable difference, and
-  with one run each a gap this small is noise. Adding the side frames did not help or hurt overhead
-  accuracy; it lets the model handle side views at all. The "all images" row is a different, harder
-  test set (it includes side frames), so it cannot be compared with the overhead-only run.
-- **Validation looks better than test** (about 45 vs 72 kcal for the overhead+side run). Trust the
-  test number. A likely cause is repeated menu items making held-out training dishes easier than the
-  official test dishes, but that is a guess, not checked.
+  same 507 overhead photos (rows 1 and 2): 52.3 vs 52.7 kcal. That is no measurable difference.
+  Adding the side frames did not help or hurt overhead accuracy; it lets the model handle side views at
+  all. The "all images" row is a different, harder test set (it includes side frames), so it cannot be
+  compared with the overhead-only run.
+- **Validation looks better than test** by roughly 27-32 kcal in every run below. Trust the test number.
+  A likely cause is repeated menu items making held-out training dishes easier than the official test
+  dishes, but that is a guess, not checked.
 - **These are cafeteria camera-rig photos, not phone photos.** How the model does on real phone photos
   is unknown and is the most important thing still to measure.
+
+### Noise, model size and amount of data
+
+All on the same 3,110 official test images (calorie MAE in kcal / mass MAE in g). Fat, carb and
+protein errors are in each run's `test_metrics.json` and have not been looked at yet.
+
+| Run | All images | Overhead photos | Side frames |
+|---|---|---|---|
+| small, seed 0 | 72.4 / 44.1 | 52.7 / 34.7 | 76.2 / 45.9 |
+| small, seed 1 | 74.1 / 44.5 | 52.9 / 36.8 | 78.3 / 46.0 |
+| large (3.2M params, 12.8 MB fp32) | 72.9 / 40.6 | 52.3 / 31.5 | 77.0 / 42.4 |
+| small, 50% of the training dishes | 85.2 / 47.8 | 61.4 / 41.0 | 89.8 / 49.1 |
+| always guess the median | 185.6 / 117.7 | | |
+
+- **Noise:** two seeds differ by about 1.7 kcal on all images (2 runs, so a rough estimate). Gaps under
+  roughly 3 kcal should be read as no difference.
+- **Bigger model:** calories are no better (72.9 vs 72.4 and 74.1), mass is about 8% better (40.6 vs
+  ~44.3 g), at 2.2x the epoch time and 3x the file size. Its training loss ended far lower (0.021 vs
+  0.043) with the same test error, so it memorises more without generalising more: the limit looks like
+  data, not model capacity.
+- **More data:** halving the training dishes raised calorie error about 16% (85.2 vs ~73.3), so doubling
+  the dishes should lower it by about 14%. That comes from two points; the shape beyond them is
+  unknown, and there are only 4,297 training dishes, so going further needs new data.
 
 ## Limitations to be honest about
 
@@ -162,9 +185,8 @@ How to read this:
 
 ## Roadmap
 
-1. **Done: train v0** (see Results so far). Still to do: repeat with other seeds to learn the run-to-run
-   noise, try `mobilenet_v3_large`, and run the learning curve (`--train-fraction`) to see whether more
-   dishes would keep helping. Commands are in `docs/train-on-pc.md`.
+1. **Done: train v0, seed noise, larger model, half-data run** (see Results so far). Next: the 25%
+   point of the learning curve, and a look at the fat/carb/protein errors.
 2. **Measure whether depth is worth it.** Nutrition5k includes overhead depth for
    a subset of dishes. Train an RGB-D variant and compare against RGB-only on the
    same dishes before building any depth capture in the app (Android depth

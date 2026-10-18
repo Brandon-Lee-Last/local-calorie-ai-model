@@ -80,8 +80,8 @@ beat that baseline clearly (about 185 kcal MAE on the full test set).
 ### More experiments (each takes minutes)
 
 Compare runs on the `view_overhead` row (or the same view in both), not on `all`:
-different runs can have different test sets. Seed-to-seed noise is real, so a gap of a
-few kcal between single runs means nothing.
+different runs can have different test sets. Measured seed-to-seed spread is about
+1-2 kcal on calories (two runs), so gaps under ~3 kcal mean nothing.
 
 ```bash
 python -m calorie_model.train --seed 1 --out runs/seed1                        # noise: repeat with seeds 1, 2

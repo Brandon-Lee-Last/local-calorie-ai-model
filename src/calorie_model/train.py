@@ -94,6 +94,12 @@ def fmt(m: dict[str, float]) -> str:
     return f"cal MAE {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  mass MAE {m['mae_mass']:.1f} g"
 
 
+def fmt_all(m: dict[str, float]) -> str:
+    """One line with every output: calories (and percent error) plus mass and the three macros."""
+    others = "  ".join(f"{t} {m[f'mae_{t}']:.1f} g" for t in TARGETS[1:])
+    return f"cal {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  {others}"
+
+
 def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("--data-root", type=Path, default=Path("data/nutrition5k"))
@@ -197,7 +203,7 @@ def main(argv: list[str] | None = None) -> None:
     (args.out / "test_metrics.json").write_text(json.dumps(report, indent=2))
     print(f"\nTEST ({len(test_ds)} images)")
     for name, m in report.items():
-        print(f"  {name:16s} {fmt(m)}")
+        print(f"  {name:16s} {fmt_all(m)}")
 
 
 if __name__ == "__main__":
