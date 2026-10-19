@@ -33,12 +33,20 @@ from torch import nn
 from torch.utils.data import Dataset
 
 from .batches import Batches, load_bank
-from .data import Nutrition5kDataset, OpenImagesDataset, SyntheticDataset
+from .data import (
+    FOOD_COL,
+    KNOWN_START,
+    N_OUT,
+    WEIGHT_COL,
+    ExtraNutritionDataset,
+    Nutrition5kDataset,
+    OpenImagesDataset,
+    SyntheticDataset,
+)
 from .model import TARGETS, NutritionNet, count_parameters, scale_vector
 
 # Calories is the headline number, so it gets the largest loss weight.
 LOSS_WEIGHTS = {"calories": 2.0, "mass": 1.0, "fat": 1.0, "carb": 1.0, "protein": 1.0}
-FOOD_COL, MASK_COL = len(TARGETS), len(TARGETS) + 1  # target columns: food label, has-nutrition-labels
 THRESHOLDS = (0.2, 0.35, 0.5, 0.65, 0.8)
 
 
@@ -52,9 +60,11 @@ def get_device(name: str) -> torch.device:
     return torch.device("cpu")
 
 
-def _metrics(abs_err_sum: torch.Tensor, true_sum: torch.Tensor, n: int) -> dict[str, float]:
-    metrics = {f"mae_{t}": float(abs_err_sum[i] / n) for i, t in enumerate(TARGETS)}
-    metrics["mae_calories_pct"] = 100.0 * float(abs_err_sum[0] / true_sum[0].clamp(min=1e-6))
+def _metrics(abs_err_sum: torch.Tensor, true_sum: torch.Tensor, counts: torch.Tensor) -> dict[str, float]:
+    """Per-output MAE over the photos that have that label; outputs with no labels are left out."""
+    metrics = {f"mae_{t}": float(abs_err_sum[i] / counts[i]) for i, t in enumerate(TARGETS) if counts[i] > 0}
+    if counts[0] > 0:
+        metrics["mae_calories_pct"] = 100.0 * float(abs_err_sum[0] / true_sum[0].clamp(min=1e-6))
     return metrics
 
 
@@ -96,22 +106,21 @@ def evaluate(model: nn.Module, batches: Iterable[tuple[torch.Tensor, torch.Tenso
     percent of mean true calories) and, if the model has a food output, food / not-food metrics over all photos."""
     model.eval()
     scale = scale_vector(device)
-    abs_err = torch.zeros(len(TARGETS), device=device)
-    true_sum = torch.zeros(len(TARGETS), device=device)
-    n = 0
+    abs_err = torch.zeros(N_OUT, device=device)
+    true_sum = torch.zeros(N_OUT, device=device)
+    counts = torch.zeros(N_OUT, device=device)
     probs, labels = [], []
     for x, y in batches:
         x, y = x.to(device), y.to(device)
         pred = model(x)
-        has = y[:, MASK_COL] > 0
-        if has.any():
-            abs_err += ((pred[has, :FOOD_COL] - y[has, :FOOD_COL]).abs() * scale).sum(0)
-            true_sum += (y[has, :FOOD_COL] * scale).sum(0)
-            n += int(has.sum())
+        known = y[:, KNOWN_START : KNOWN_START + N_OUT]  # which labels are real, per photo and output
+        abs_err += ((pred[:, :N_OUT] - y[:, :N_OUT]).abs() * scale * known).sum(0)
+        true_sum += (y[:, :N_OUT] * scale * known).sum(0)
+        counts += known.sum(0)
         if pred.shape[1] > FOOD_COL:
             probs.append(torch.sigmoid(pred[:, FOOD_COL]).cpu())
             labels.append(y[:, FOOD_COL].cpu())
-    metrics = _metrics(abs_err.cpu(), true_sum.cpu(), n) if n else {}
+    metrics = _metrics(abs_err.cpu(), true_sum.cpu(), counts.cpu())
     if probs:
         metrics.update(gate_metrics(torch.cat(probs), torch.cat(labels)))
     return metrics
@@ -120,16 +129,20 @@ def evaluate(model: nn.Module, batches: Iterable[tuple[torch.Tensor, torch.Tenso
 def baseline_metrics(train_targets: torch.Tensor, test_targets: torch.Tensor) -> dict[str, float]:
     """Same metrics for a model that always predicts the per-target training median."""
     scale = scale_vector()
-    median = train_targets[train_targets[:, MASK_COL] > 0][:, :FOOD_COL].median(dim=0).values
-    test = test_targets[test_targets[:, MASK_COL] > 0][:, :FOOD_COL]
-    return _metrics(((test - median).abs() * scale).sum(0), (test * scale).sum(0), len(test))
+    train_known = train_targets[:, KNOWN_START : KNOWN_START + N_OUT] > 0
+    median = torch.stack([train_targets[train_known[:, i], i].median() for i in range(N_OUT)])
+    known = test_targets[:, KNOWN_START : KNOWN_START + N_OUT]
+    err = (test_targets[:, :N_OUT] - median).abs() * scale * known
+    return _metrics(err.sum(0), (test_targets[:, :N_OUT] * scale * known).sum(0), known.sum(0))
 
 
 def compute_loss(pred: torch.Tensor, y: torch.Tensor, weights: torch.Tensor, gate_weight: float) -> torch.Tensor:
-    """Nutrition loss over labelled photos only, plus the food / not-food loss over every photo."""
-    per_target = F.smooth_l1_loss(pred[:, :FOOD_COL], y[:, :FOOD_COL], reduction="none", beta=0.1) * weights
-    has = y[:, MASK_COL]
-    loss = (per_target.mean(1) * has).sum() / has.sum().clamp(min=1.0)
+    """Nutrition loss over the labels each photo really has, each photo scaled by how much its labels are
+    trusted, plus the food / not-food loss over every photo."""
+    per_target = F.smooth_l1_loss(pred[:, :N_OUT], y[:, :N_OUT], reduction="none", beta=0.1) * weights
+    known = y[:, KNOWN_START : KNOWN_START + N_OUT]
+    trust = y[:, WEIGHT_COL : WEIGHT_COL + 1]
+    loss = (per_target * known * trust).sum() / known.sum().clamp(min=1.0)
     if pred.shape[1] > FOOD_COL:
         loss = loss + gate_weight * F.binary_cross_entropy_with_logits(pred[:, FOOD_COL], y[:, FOOD_COL])
     return loss
@@ -141,6 +154,7 @@ class Splits:
     val: list[Dataset]
     test: Dataset  # nutrition test set (Nutrition5k)
     gate_test: OpenImagesDataset | None = field(default=None)  # held-out food / not-food photos
+    extra_test: list[tuple[str, Dataset]] = field(default_factory=list)  # held-out photos of each extra source
 
 
 def make_splits(args: argparse.Namespace) -> Splits:
@@ -158,6 +172,13 @@ def make_splits(args: argparse.Namespace) -> Splits:
         splits.train.append(OpenImagesDataset(args.openimages_root, "train", **oi))
         splits.val.append(OpenImagesDataset(args.openimages_root, "val", **oi))
         splits.gate_test = OpenImagesDataset(args.openimages_root, "test", img_size=args.img_size)
+    for root in args.extra_data:
+        # Extra sources only add training data: the checkpoint is still chosen on clean Nutrition5k validation.
+        splits.train.append(ExtraNutritionDataset(root, "train", args.img_size))
+        try:
+            splits.extra_test.append((root.name, ExtraNutritionDataset(root, "test", args.img_size)))
+        except RuntimeError:
+            pass  # this source has no held-out photos
     return splits
 
 
@@ -174,9 +195,12 @@ def fmt(m: dict[str, float]) -> str:
 
 
 def fmt_all(m: dict[str, float]) -> str:
-    """One line with every output: calories (and percent error) plus mass and the three macros."""
-    others = "  ".join(f"{t} {m[f'mae_{t}']:.1f} g" for t in TARGETS[1:])
-    return f"cal {m['mae_calories']:.1f} kcal ({m['mae_calories_pct']:.1f}%)  {others}"
+    """One line with every labelled output: calories (and percent error) plus mass and the three macros."""
+    parts = []
+    if "mae_calories" in m:
+        parts.append(f"cal {m['mae_calories']:.1f} kcal" + (f" ({m['mae_calories_pct']:.1f}%)" if "mae_calories_pct" in m else ""))
+    parts += [f"{t} {m[f'mae_{t}']:.1f} g" for t in TARGETS[1:] if f"mae_{t}" in m]
+    return "  ".join(parts) or "(no labelled outputs)"
 
 
 def pct(x: float) -> str:
@@ -206,6 +230,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--data-root", type=Path, default=Path("data/nutrition5k"))
     p.add_argument("--openimages-root", type=Path, default=None, help="add the food / not-food output, trained on this Open Images cache")
     p.add_argument("--gate-weight", type=float, default=1.0, help="weight of the food / not-food loss")
+    p.add_argument("--extra-data", type=Path, action="append", default=[], metavar="DIR",
+                   help="extra food photos with (partial, maybe noisy) nutrition labels, see docs/adding-data.md; repeatable")
     p.add_argument("--views", default="overhead,side", help="comma-separated: overhead, side")
     p.add_argument("--val-fraction", type=float, default=0.1, help="share of training data held out for validation")
     p.add_argument("--synthetic", action="store_true", help="use procedural data (pipeline smoke test)")
@@ -296,8 +322,11 @@ def main(argv: list[str] | None = None) -> None:
     model.load_state_dict(torch.load(args.out / "best.pt", map_location=device, weights_only=True)["state_dict"])
     report: dict = {
         "all": evaluate(model, test_batches, device),
-        "baseline_median": baseline_metrics(torch.cat([d.targets() for d in splits.train]), splits.test.targets()),
+        "baseline_median": baseline_metrics(splits.train[0].targets(), splits.test.targets()),  # Nutrition5k train
     }
+    for name, ds in splits.extra_test:
+        report[f"extra_{name}"] = evaluate(model, make_batches(ds, args, device), device)
+        report[f"extra_{name}"]["images"] = len(ds)
     if not args.synthetic:
         for view in args.views.split(","):
             try:

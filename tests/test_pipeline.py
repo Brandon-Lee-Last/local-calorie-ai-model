@@ -4,7 +4,19 @@ import torch
 from PIL import Image
 
 from calorie_model import OUTPUT_NAMES, TARGETS, NutritionNet
-from calorie_model.data import TARGET_WIDTH, Nutrition5kDataset, OpenImagesDataset, SyntheticDataset, load_rgb_uint8
+from calorie_model.data import (
+    FOOD_COL,
+    KNOWN_START,
+    N_OUT,
+    TARGET_WIDTH,
+    WEIGHT_COL,
+    ExtraNutritionDataset,
+    Nutrition5kDataset,
+    OpenImagesDataset,
+    SyntheticDataset,
+    load_rgb_uint8,
+    make_target,
+)
 from calorie_model.model import count_parameters
 from calorie_model.train import compute_loss, main as train_main
 
@@ -149,8 +161,8 @@ def test_nutrition5k_loader_labels_and_view_filter(tmp_path):
     assert x.shape == (3, IMG, IMG) and 0 <= x.min() and x.max() <= 1
     # Targets are scaled units: 305 kcal / 500 = 0.61, 250 g / 400 = 0.625.
     assert torch.allclose(y[:2], torch.tensor([0.61, 0.625]), atol=1e-6)
-    assert ds.targets().shape == (2, TARGET_WIDTH)  # 5 nutrition values + food flag + has-nutrition flag
-    assert ds.targets()[0, len(TARGETS):].tolist() == [1.0, 1.0]
+    assert ds.targets().shape == (2, TARGET_WIDTH)  # 5 values, food flag, 5 known flags, trust weight
+    assert ds.targets()[0, FOOD_COL:].tolist() == [1.0] + [1.0] * N_OUT + [1.0]  # food, all five labels known, full trust
 
 
 def test_nutrition5k_loader_explains_missing_images(tmp_path):
@@ -421,7 +433,7 @@ def test_openimages_dataset_labels_splits_and_groups(tmp_path):
     assert not ids(train) & ids(val) and all(i.startswith("test_") for i in ids(test))
     food = test.targets()[:, len(TARGETS)]  # the food column
     assert [g == "food" for g in test.groups] == [bool(v) for v in food]
-    assert (test.targets()[:, len(TARGETS) + 1] == 0).all()  # no nutrition labels
+    assert (test.targets()[:, KNOWN_START : KNOWN_START + N_OUT] == 0).all()  # no nutrition labels
     assert set(OpenImagesDataset(tmp_path, "test", img_size=IMG, groups=("animal",)).groups) == {"animal"}
 
 
@@ -437,26 +449,106 @@ def test_roc_auc_and_gate_metrics():
     assert gate_metrics(torch.tensor([0.9, 0.4, 0.2, 0.7]), labels, threshold=0.3)["food_recall"] == 1.0
 
 
-def test_loss_ignores_nutrition_for_photos_without_labels_but_still_trains_the_food_output():
-    scale = torch.ones(len(TARGETS))
-    pred = torch.randn(4, 6)
-    y = torch.zeros(4, 7)
-    y[:2, :5] = torch.rand(2, 5)
-    y[:2, 5] = 1.0  # two labelled food photos
-    y[:2, 6] = 1.0  # ... with nutrition labels
-    y[2:, 5] = torch.tensor([1.0, 0.0])  # a food photo and a non-food photo, no nutrition labels
+def test_loss_only_counts_labels_that_exist_and_trusts_sources_by_weight():
+    scale = torch.ones(N_OUT)
+    pred = torch.randn(4, N_OUT + 1)
+    nan = float("nan")
+    y = torch.stack([
+        make_target(torch.rand(N_OUT)),                                   # trusted, all five labels
+        make_target(torch.tensor([nan, 0.5, nan, nan, nan])),             # only a weight label
+        make_target(torch.tensor([0.3, nan, nan, nan, nan]), weight=0.25),  # only calories, noisy source
+        make_target(None, food=0.0),                                      # a dog: no nutrition at all
+    ])
+    assert y.shape == (4, TARGET_WIDTH)
+
     garbage = y.clone()
-    garbage[2:, :5] = 999.0  # nutrition targets of unlabelled photos must not matter
-    assert torch.allclose(compute_loss(pred, y, scale, 1.0), compute_loss(pred, garbage, scale, 1.0))
-    only_labelled = compute_loss(pred[:2], y[:2], scale, 0.0)
-    nutrition_part = compute_loss(pred, y, scale, 0.0)
-    assert torch.allclose(nutrition_part, only_labelled)  # averaged over labelled photos only
-    assert compute_loss(pred, y, scale, 1.0) > nutrition_part  # the food loss adds to it
+    garbage[1, [0, 2, 3, 4]] = 999.0  # unknown values must not matter, whatever is stored there
+    garbage[3, :N_OUT] = 999.0
+    assert torch.allclose(compute_loss(pred, y, scale, 0.0), compute_loss(pred, garbage, scale, 0.0))
+
+    # the mass-only photo trains the mass output and nothing else
+    pred_a = pred.clone()
+    pred_a[1, [0, 2, 3, 4]] += 50.0
+    assert torch.allclose(compute_loss(pred, y, scale, 0.0), compute_loss(pred_a, y, scale, 0.0))
+    pred_b = pred.clone()
+    pred_b[1, 1] += 5.0
+    assert not torch.allclose(compute_loss(pred, y, scale, 0.0), compute_loss(pred_b, y, scale, 0.0))
+
+    # a noisy source (weight 0.25) pulls a quarter as hard as a trusted one with the same error
+    def pull(weight):
+        t = make_target(torch.tensor([0.3, nan, nan, nan, nan]), weight=weight).unsqueeze(0)
+        p = torch.zeros(1, N_OUT + 1)
+        return compute_loss(p, t, scale, 0.0)
+    assert torch.allclose(pull(0.25) * 4, pull(1.0), rtol=1e-5)
+
+    # the food loss adds to it, and flipping the dog's food label changes it
+    assert compute_loss(pred, y, scale, 1.0) > compute_loss(pred, y, scale, 0.0)
     flipped = y.clone()
-    flipped[2:, 5] = 1 - flipped[2:, 5]
+    flipped[3, FOOD_COL] = 1.0
     assert not torch.allclose(compute_loss(pred, y, scale, 1.0), compute_loss(pred, flipped, scale, 1.0))
-    # a model without the food output ignores the food columns
-    assert compute_loss(pred[:, :5], y, scale, 1.0).ndim == 0
+    # a model without the food output ignores the food column
+    assert compute_loss(pred[:, :N_OUT], y, scale, 1.0).ndim == 0
+
+
+def _fake_extra_source(root, rows):
+    """An extra source: index.csv with header and rows given as dicts (missing keys = blank cells)."""
+    import csv
+
+    cols = ["path", "split", "dish_id", "calories", "mass", "fat", "carb", "protein", "weight", "source"]
+    (root / "img").mkdir(parents=True, exist_ok=True)
+    with open(root / "index.csv", "w", newline="") as f:
+        w = csv.DictWriter(f, fieldnames=cols)
+        w.writeheader()
+        for i, r in enumerate(rows):
+            Image.new("RGB", (300, 200), (10 * i, 80, 160)).save(root / "img" / f"{i}.jpg")  # bigger than the model input
+            w.writerow({"path": f"img/{i}.jpg", **r})
+
+
+def test_extra_nutrition_dataset_partial_labels_weights_and_split(tmp_path):
+    _fake_extra_source(tmp_path, [
+        {"mass": "250", "source": "lab"},                                       # weight only
+        {"calories": "400", "protein": "20", "weight": "0.5", "source": "ai"},  # calories + protein, noisy
+        {"calories": "300", "mass": "200", "fat": "10", "carb": "40", "protein": "15", "split": "test"},
+    ])  # fmt: skip
+    train = ExtraNutritionDataset(tmp_path, "train", img_size=IMG)
+    test = ExtraNutritionDataset(tmp_path, "test", img_size=IMG)
+    assert len(train) == 2 and len(test) == 1 and train.sources == ["lab", "ai"]
+    t = train.targets()
+    known = t[:, KNOWN_START : KNOWN_START + N_OUT]
+    assert known[0].tolist() == [0, 1, 0, 0, 0] and known[1].tolist() == [1, 0, 0, 0, 1]
+    assert abs(t[0, 1].item() - 250 / 400) < 1e-6  # mass is scaled like every other source (TARGET_SCALE)
+    assert t[0, WEIGHT_COL] == 1.0 and t[1, WEIGHT_COL] == 0.5 and (t[:, FOOD_COL] == 1).all()
+    x, y = train[0]
+    assert x.shape == (3, IMG, IMG) and y.shape == (TARGET_WIDTH,)  # a 300x200 photo is squashed to the model size
+
+
+def test_extra_nutrition_dataset_rejects_bad_rows(tmp_path):
+    _fake_extra_source(tmp_path, [{"calories": "-5"}])
+    with pytest.raises(ValueError, match="negative calories"):
+        ExtraNutritionDataset(tmp_path, "train", img_size=IMG)
+    _fake_extra_source(tmp_path, [{"calories": "5", "weight": "0"}])
+    with pytest.raises(ValueError, match="weight must be > 0"):
+        ExtraNutritionDataset(tmp_path, "train", img_size=IMG)
+    _fake_extra_source(tmp_path, [{"calories": "5"}])
+    with pytest.raises(RuntimeError, match="no 'test' photos"):
+        ExtraNutritionDataset(tmp_path, "test", img_size=IMG)
+
+
+def test_training_with_an_extra_source_reports_it_separately(tmp_path):
+    import json
+
+    _fake_cache(tmp_path / "n5k")
+    _fake_extra_source(tmp_path / "fpb", [{"mass": "250", "weight": "0.7"}] * 6 + [{"mass": "300", "split": "test"}] * 2)
+    out = tmp_path / "run"
+    train_main(
+        ["--data-root", str(tmp_path / "n5k"), "--extra-data", str(tmp_path / "fpb"), "--no-pretrained", "--epochs", "1",
+         "--batch-size", "8", "--img-size", str(IMG), "--load-threads", "1", "--device", "cpu", "--val-fraction", "0.2",
+         "--out", str(out)]
+    )  # fmt: skip
+    report = json.loads((out / "test_metrics.json").read_text())
+    assert report["extra_fpb"]["images"] == 2
+    assert "mae_mass" in report["extra_fpb"] and "mae_calories" not in report["extra_fpb"]  # only the labelled output
+    assert "mae_calories" in report["all"] and "baseline_median" in report
 
 
 def test_load_bank_concatenates_datasets_in_order(tmp_path):
@@ -597,3 +689,58 @@ def test_check_photos_reports_not_food_below_the_threshold(tmp_path, capsys):
     assert describe(values + [0.03], 0.5, True) == "food 0.03 -> NOT FOOD"
     assert describe(values + [0.97], 0.5, True).startswith("food 0.97 -> food | 350 kcal, mass 234 g")
     assert describe(values, 0.5, False).startswith("(model has no food output) 350 kcal")
+
+
+def test_tta_deploy_model_averages_four_flips_and_keeps_the_contract():
+    from torch import nn
+
+    from calorie_model.export import DeployModel, random_pixels
+
+    class Asymmetric(nn.Module):
+        """A stand-in whose answer clearly depends on which side/half of the photo is bright."""
+
+        food_head = True
+
+        def forward(self, x):
+            w, h = x.shape[3], x.shape[2]
+            left, right = x[..., : w // 2].mean((1, 2, 3)), x[..., w // 2 :].mean((1, 2, 3))
+            top, bottom = x[:, :, : h // 2].mean((1, 2, 3)), x[:, :, h // 2 :].mean((1, 2, 3))
+            return torch.stack([left, right, top, bottom, x.mean((1, 2, 3)), left - right], dim=1)
+
+    px = torch.from_numpy(random_pixels(3, IMG))
+    plain_model, tta_model = DeployModel(Asymmetric()).eval(), DeployModel(Asymmetric(), tta=True).eval()
+    with torch.no_grad():
+        plain, steady = plain_model(px), tta_model(px)
+        manual = torch.stack([plain_model(v) for v in (px, px.flip(2), px.flip(1), px.flip(1).flip(2))])
+        mirrored = tta_model(px.flip(2))
+    assert steady.shape == plain.shape == (3, 6)
+    assert not torch.allclose(plain, steady)  # averaging changes the answer...
+    # ...by averaging the four runs: values are averaged, and so is the food logit before the sigmoid
+    assert torch.allclose(steady[:, :5], manual[:, :, :5].mean(0), rtol=1e-4, atol=1e-3)
+    assert torch.allclose(steady, mirrored, rtol=1e-4, atol=1e-3)  # and the result no longer depends on a mirror image
+    assert ((steady[:, 5] >= 0) & (steady[:, 5] <= 1)).all()
+
+
+def test_view_spread_measures_disagreement_between_a_dishs_photos():
+    from calorie_model.evaluate_checkpoint import view_spread
+
+    s = view_spread(np.array([100.0, 140.0, 300.0, 200.0, 200.0, 50.0]), ["a", "a", "b", "c", "c", "d"])
+    assert s["dishes"] == 2  # b and d have a single photo and are ignored
+    assert s["mean_range"] == (40 + 0) / 2 and s["mean_std"] == (20 + 0) / 2
+    assert np.isnan(view_spread(np.array([1.0, 2.0]), ["x", "y"])["mean_range"])
+
+
+def test_evaluate_checkpoint_reports_plain_and_tta(tmp_path, capsys):
+    import json
+
+    from calorie_model.evaluate_checkpoint import main as eval_main
+
+    _fake_cache(tmp_path / "n5k")
+    net = NutritionNet(pretrained=False)
+    torch.save({"state_dict": net.state_dict(), "backbone": "mobilenet_v3_small", "img_size": IMG, "food_head": True}, tmp_path / "m.pt")
+    eval_main([str(tmp_path / "m.pt"), "--data-root", str(tmp_path / "n5k"), "--device", "cpu", "--json", str(tmp_path / "r.json")])
+    out = capsys.readouterr().out
+    assert "plain" in out and "tta" in out and "mean range" in out
+    results = json.loads((tmp_path / "r.json").read_text())
+    assert set(results) == {"plain", "tta"} and results["plain"]["consistency"]["dishes"] == 2  # two test dishes, two views each
+    assert {"view_overhead", "view_side", "all"} <= set(results["plain"])

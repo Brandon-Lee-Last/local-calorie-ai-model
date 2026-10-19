@@ -130,6 +130,27 @@ python -m calorie_model.train --openimages-root data/openimages --out runs/gate
 Photos used here are CC BY 2.0 (author and licence for each are in `data/openimages/index.csv`). Whether
 training on them needs more than attribution is a question for someone qualified; this is not legal advice.
 
+## Steadier answers: the consistency check
+
+```bash
+python -m calorie_model.evaluate_checkpoint runs/gate/best.pt
+```
+
+The same dish is photographed from up to five angles in the test set, so it should get about the same
+estimate from each. For the plain model and for a "test-time averaging" version (the photo mirrored four
+ways and averaged) this prints the usual errors, plus, per dish, how far apart the calorie estimates for its
+photos are (`mean range`, `mean std`: smaller is steadier). Consistency is not accuracy, so read both. If
+averaging helps, export it with `--tta` (same input and output, four times the work, still milliseconds):
+
+```bash
+python -m calorie_model.export_tflite runs/gate/best.pt --tta --out build/nutrition.tflite   # Python 3.11 + litert-torch
+```
+
+## Adding more data
+
+See `docs/adding-data.md` for the format, the candidates I found (unverified, licences unread), and how to
+judge whether a new source actually helps.
+
 ## 5. What to send back
 
 Paste the final `TEST (...)` table from both runs. If you want the TFLite file

@@ -73,11 +73,13 @@ src/calorie_model/
   prepare_data.py   download Nutrition5k over HTTPS, build a compact 256px image cache
   prepare_openimages.py  food / not-food photos from Open Images (CC BY 2.0) for the food output
   check_photos.py   run a checkpoint on your own photos exactly as the app will
+  evaluate_checkpoint.py  accuracy AND consistency (same dish, different angles), plain vs averaged
   data.py           cached-dataset loader (train/val/test), augmentations, synthetic data
   train.py          training loop (AdamW + OneCycle), val split, final test report + baseline
   export.py         checkpoint -> ONNX (+ parity check, optional int8)
   export_tflite.py  checkpoint -> .tflite via litert-torch (+ parity check)
   predict.py        run an ONNX model on one image, print JSON
+docs/adding-data.md   how to plug in more labelled data, and the candidate sources I found
 docs/train-on-pc.md   step-by-step runbook for training on a Windows/Linux GPU machine
 docs/android-expo.md
 tests/test_pipeline.py

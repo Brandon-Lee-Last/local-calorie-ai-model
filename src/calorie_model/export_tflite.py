@@ -21,7 +21,7 @@ from .export import deploy_model, load_checkpoint, random_pixels
 from .model import TARGETS
 
 
-def export_tflite(model: nn.Module, img_size: int, out: Path) -> None:
+def export_tflite(model: nn.Module, img_size: int, out: Path, tta: bool = False) -> None:
     try:
         import litert_torch
     except ImportError as e:  # pragma: no cover - depends on optional install
@@ -30,7 +30,7 @@ def export_tflite(model: nn.Module, img_size: int, out: Path) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     sample = torch.from_numpy(random_pixels(1, img_size))
     with torch.no_grad():
-        edge_model = litert_torch.convert(deploy_model(model), (sample,))
+        edge_model = litert_torch.convert(deploy_model(model, tta), (sample,))
     edge_model.export(str(out))
 
 
@@ -48,13 +48,13 @@ def run_tflite(tflite_path: Path, pixels: np.ndarray) -> np.ndarray:
     return interp.get_tensor(interp.get_output_details()[0]["index"])
 
 
-def check_parity(model: nn.Module, tflite_path: Path, img_size: int, atol: float = 1e-1) -> float:
+def check_parity(model: nn.Module, tflite_path: Path, img_size: int, atol: float = 1e-1, tta: bool = False) -> float:
     """Max abs difference (real units) between PyTorch and the .tflite on host CPU."""
     worst = 0.0
     for seed in (1, 2, 3):
         pixels = random_pixels(1, img_size, seed=seed)
         with torch.no_grad():
-            expected = deploy_model(model)(torch.from_numpy(pixels)).numpy()
+            expected = deploy_model(model, tta)(torch.from_numpy(pixels)).numpy()
         worst = max(worst, float(np.abs(expected - run_tflite(tflite_path, pixels)).max()))
     if worst > atol:
         raise AssertionError(f"TFLite output differs from PyTorch by {worst:.4f} (> {atol})")
@@ -65,11 +65,12 @@ def main(argv: list[str] | None = None) -> None:
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument("checkpoint", type=Path)
     p.add_argument("--out", type=Path, default=Path("build/nutrition.tflite"))
+    p.add_argument("--tta", action="store_true", help="average the model over the photo mirrored/flipped (steadier, 4x compute)")
     args = p.parse_args(argv)
 
     net, img_size = load_checkpoint(args.checkpoint)
-    export_tflite(net, img_size, args.out)
-    diff = check_parity(net, args.out, img_size)
+    export_tflite(net, img_size, args.out, tta=args.tta)
+    diff = check_parity(net, args.out, img_size, tta=args.tta)
     print(f"{args.out}: {args.out.stat().st_size / 1e6:.2f} MB, max |torch - tflite| = {diff:.2e}")
     print("outputs:", ", ".join(TARGETS))
 

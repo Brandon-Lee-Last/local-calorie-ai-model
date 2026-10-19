@@ -28,17 +28,28 @@ from .model import TARGETS, NutritionNet, scale_vector
 
 
 class DeployModel(nn.Module):
-    """Wraps the trained net with the app-facing input/output contract."""
+    """Wraps the trained net with the app-facing input/output contract.
 
-    def __init__(self, net: NutritionNet) -> None:
+    With ``tta`` (test-time augmentation) the photo is also run mirrored, flipped and both, and the four
+    results are averaged inside the model. That makes the answer steadier for the same photo (the model
+    was trained with flips, so the four views should agree), at four times the compute; the input and
+    output formats are unchanged.
+    """
+
+    def __init__(self, net: NutritionNet, tta: bool = False) -> None:
         super().__init__()
         self.net = net
+        self.tta = tta
         self.register_buffer("scale", scale_vector(), persistent=False)
 
     def forward(self, image: torch.Tensor) -> torch.Tensor:
         # Cast before permuting: litert-torch cannot lower permute on uint8 tensors.
         x = image.float().permute(0, 3, 1, 2) / 255.0
+        if self.tta:
+            x = torch.cat([x, x.flip(3), x.flip(2), x.flip(2).flip(3)], dim=0)
         out = self.net(x)
+        if self.tta:
+            out = out.reshape(4, -1, out.shape[1]).mean(dim=0)  # average over the four versions
         values = out[:, : len(TARGETS)] * self.scale
         if not self.net.food_head:
             return values
@@ -52,8 +63,8 @@ def load_checkpoint(path: str | Path) -> tuple[NutritionNet, int]:
     return net.eval(), ckpt["img_size"]
 
 
-def deploy_model(model: nn.Module) -> nn.Module:
-    return (DeployModel(model) if isinstance(model, NutritionNet) else model).eval()
+def deploy_model(model: nn.Module, tta: bool = False) -> nn.Module:
+    return (DeployModel(model, tta) if isinstance(model, NutritionNet) else model).eval()
 
 
 def random_pixels(n: int, img_size: int, seed: int = 0) -> np.ndarray:
@@ -61,11 +72,11 @@ def random_pixels(n: int, img_size: int, seed: int = 0) -> np.ndarray:
     return rng.integers(0, 256, size=(n, img_size, img_size, 3), dtype=np.uint8)
 
 
-def export_onnx(model: nn.Module, img_size: int, out: Path, opset: int = 17) -> None:
+def export_onnx(model: nn.Module, img_size: int, out: Path, opset: int = 17, tta: bool = False) -> None:
     out.parent.mkdir(parents=True, exist_ok=True)
     dummy = torch.from_numpy(random_pixels(1, img_size))
     torch.onnx.export(
-        deploy_model(model),
+        deploy_model(model, tta),
         dummy,
         str(out),
         input_names=["image"],
@@ -76,13 +87,13 @@ def export_onnx(model: nn.Module, img_size: int, out: Path, opset: int = 17) -> 
     )
 
 
-def check_parity(model: nn.Module, onnx_path: Path, img_size: int, atol: float = 1e-2) -> float:
+def check_parity(model: nn.Module, onnx_path: Path, img_size: int, atol: float = 1e-2, tta: bool = False) -> float:
     """Max abs difference (real units) between PyTorch and ONNX Runtime outputs."""
     import onnxruntime as ort
 
     pixels = random_pixels(2, img_size, seed=1)
     with torch.no_grad():
-        expected = deploy_model(model)(torch.from_numpy(pixels)).numpy()
+        expected = deploy_model(model, tta)(torch.from_numpy(pixels)).numpy()
     sess = ort.InferenceSession(str(onnx_path), providers=["CPUExecutionProvider"])
     got = sess.run(None, {"image": pixels})[0]
     diff = float(np.abs(expected - got).max())
@@ -157,11 +168,12 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", type=Path, default=Path("build/nutrition.onnx"))
     p.add_argument("--quantize", action="store_true")
     p.add_argument("--calib-dir", type=Path, default=None)
+    p.add_argument("--tta", action="store_true", help="average the model over the photo mirrored/flipped (steadier, 4x compute)")
     args = p.parse_args(argv)
 
     net, img_size = load_checkpoint(args.checkpoint)
-    export_onnx(net, img_size, args.out)
-    diff = check_parity(net, args.out, img_size)
+    export_onnx(net, img_size, args.out, tta=args.tta)
+    diff = check_parity(net, args.out, img_size, tta=args.tta)
     print(f"{args.out}: {args.out.stat().st_size / 1e6:.2f} MB, max |torch - onnx| = {diff:.2e}")
     print("outputs:", ", ".join(TARGETS))
 
