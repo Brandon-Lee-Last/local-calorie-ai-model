@@ -7,7 +7,7 @@ from pathlib import Path
 
 import numpy as np
 import torch
-from PIL import Image
+from PIL import Image, ImageOps
 from torch.utils.data import Dataset
 from torchvision import transforms as T
 
@@ -26,7 +26,7 @@ def load_rgb_uint8(path: str | Path, img_size: int) -> np.ndarray:
     axis) and uses the same resize as ``eval_transform``.
     """
     with Image.open(path) as im:
-        resized = T.Resize((img_size, img_size))(im.convert("RGB"))
+        resized = T.Resize((img_size, img_size))(ImageOps.exif_transpose(im).convert("RGB"))  # phones store portrait shots rotated + a tag
     return np.array(resized, dtype=np.uint8)  # a copy: PIL's buffer view is read-only
 
 
@@ -232,7 +232,7 @@ class ExtraNutritionDataset(Dataset):
         with Image.open(path) as im:
             if im.format == "JPEG":
                 im.draft("RGB", (self.size * 2, self.size * 2))  # decode big photos at reduced size, much faster
-            return self.transform(im.convert("RGB")), target
+            return self.transform(ImageOps.exif_transpose(im).convert("RGB")), target
 
 
 class SyntheticDataset(Dataset):

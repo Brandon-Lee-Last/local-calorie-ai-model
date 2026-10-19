@@ -72,6 +72,9 @@ src/calorie_model/
   model.py          NutritionNet, target order and scales
   prepare_data.py   download Nutrition5k over HTTPS, build a compact 256px image cache
   prepare_openimages.py  food / not-food photos from Open Images (CC BY 2.0) for the food output
+  sa_foods.py       South African dish list + per-100 g sheet loader, weighed-plate arithmetic
+  prepare_commons.py  openly licensed South African dish photos from Wikimedia Commons (untested live)
+  ingest_meals.py   weighed phone photos of meals -> training folder (--extra-data)
   check_photos.py   run a checkpoint on your own photos exactly as the app will
   evaluate_checkpoint.py  accuracy AND consistency (same dish, different angles), plain vs averaged
   data.py           cached-dataset loader (train/val/test), augmentations, synthetic data
@@ -80,9 +83,11 @@ src/calorie_model/
   export_tflite.py  checkpoint -> .tflite via litert-torch (+ parity check)
   predict.py        run an ONNX model on one image, print JSON
 docs/adding-data.md   how to plug in more labelled data, and the candidate sources I found
+docs/south-african-foods.md   what the model does and does not know about South African food, and the plan
+datasets/south_african/   dish list (draft) and an empty per-100 g sheet
 docs/train-on-pc.md   step-by-step runbook for training on a Windows/Linux GPU machine
 docs/android-expo.md
-tests/test_pipeline.py
+tests/test_pipeline.py, tests/test_south_african.py
 ```
 
 ## Quickstart
@@ -202,6 +207,15 @@ photos (real-world food, and non-food including dogs, cats and people). The app 
 like food" when it is low. A first full-size run worked (see "Food / not-food results" below); the model
 is not yet converted and shipped in the app, so until it is, the app still has no way to refuse a non-food
 photo. See `docs/train-on-pc.md` ("Teaching the model what is NOT food").
+
+## South African food
+
+**The model does not know South African food yet.** Nothing it was trained on is South African, and no
+public dataset of South African dishes with weights or nutrition exists that I could find. The tooling to
+change that is in place (a draft list of 57 dishes, a Wikimedia Commons downloader, a weighed-meal
+converter, a held-out test that compares a run with and without South African data); the data is not. Whether
+it "knows" South African food will be a measured number, not a slogan. See
+[docs/south-african-foods.md](docs/south-african-foods.md).
 
 ## Limitations to be honest about
 

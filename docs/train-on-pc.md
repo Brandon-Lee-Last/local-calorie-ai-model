@@ -146,6 +146,10 @@ averaging helps, export it with `--tta` (same input and output, four times the w
 python -m calorie_model.export_tflite runs/gate/best.pt --tta --out build/nutrition.tflite   # Python 3.11 + litert-torch
 ```
 
+## South African food
+
+See `docs/south-african-foods.md`: photos from Wikimedia Commons, weighed meals, and the with / without test.
+
 ## Adding more data
 
 See `docs/adding-data.md` for the format, the candidates I found (unverified, licences unread), and how to

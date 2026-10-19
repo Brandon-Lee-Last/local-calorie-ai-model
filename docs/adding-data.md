@@ -71,6 +71,8 @@ summaries and papers. Open each page and read the licence and the label provenan
 
 ## What would help most
 
+(For South African food, `docs/south-african-foods.md` turns this into a procedure and a converter: `ingest_meals`.)
+
 A few hundred **phone photos of meals you weighed**, with the real weight (and calories if you know them).
 That is the exact domain the app works in, no public dataset has it at scale, and even 200-500 photos would
 be worth more than a large pile of estimated labels, both for fine-tuning and for knowing how good the app

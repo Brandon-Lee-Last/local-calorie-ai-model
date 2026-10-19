@@ -1,0 +1,4 @@
+meal_id,photos,components,calories,fat,carb,protein
+m001,IMG_0001.jpg|IMG_0002.jpg,pap:250|boerewors:150|chakalaka:80,,,,
+m002,IMG_0003.jpg,bunny_chow:640,,,,
+m003,IMG_0004.jpg,melktert:120,,,,

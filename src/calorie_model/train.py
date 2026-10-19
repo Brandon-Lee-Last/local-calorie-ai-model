@@ -179,6 +179,9 @@ def make_splits(args: argparse.Namespace) -> Splits:
             splits.extra_test.append((root.name, ExtraNutritionDataset(root, "test", args.img_size)))
         except RuntimeError:
             pass  # this source has no held-out photos
+    for root in args.holdout_data:
+        # Test photos only, never trained on: the same held-out set can score a run that did not see this source.
+        splits.extra_test.append((root.name, ExtraNutritionDataset(root, "test", args.img_size)))
     return splits
 
 
@@ -232,6 +235,9 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--gate-weight", type=float, default=1.0, help="weight of the food / not-food loss")
     p.add_argument("--extra-data", type=Path, action="append", default=[], metavar="DIR",
                    help="extra food photos with (partial, maybe noisy) nutrition labels, see docs/adding-data.md; repeatable")
+    p.add_argument("--holdout-data", type=Path, action="append", default=[], metavar="DIR",
+                   help="like --extra-data but only its split=test photos, and only for scoring: compare a run that trained on a source "
+                        "with one that did not, on the same held-out photos; repeatable")
     p.add_argument("--views", default="overhead,side", help="comma-separated: overhead, side")
     p.add_argument("--val-fraction", type=float, default=0.1, help="share of training data held out for validation")
     p.add_argument("--synthetic", action="store_true", help="use procedural data (pipeline smoke test)")
@@ -249,6 +255,8 @@ def main(argv: list[str] | None = None) -> None:
     p.add_argument("--out", type=Path, default=Path("runs/default"))
     p.add_argument("--seed", type=int, default=0)
     args = p.parse_args(argv)
+    if {d.resolve() for d in args.extra_data} & {d.resolve() for d in args.holdout_data}:
+        p.error("a folder cannot be both --extra-data and --holdout-data")
 
     torch.manual_seed(args.seed)
     device = get_device(args.device)
@@ -327,6 +335,7 @@ def main(argv: list[str] | None = None) -> None:
     for name, ds in splits.extra_test:
         report[f"extra_{name}"] = evaluate(model, make_batches(ds, args, device), device)
         report[f"extra_{name}"]["images"] = len(ds)
+        report[f"extra_{name}_guess"] = baseline_metrics(splits.train[0].targets(), ds.targets())  # always the Nutrition5k median
     if not args.synthetic:
         for view in args.views.split(","):
             try:

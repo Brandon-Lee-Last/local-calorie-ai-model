@@ -1,0 +1,58 @@
+dish_id,name,aliases,category,description,commons_queries
+pap,Pap (stiff maize porridge),mielie pap|mealie pap|stywe pap|isidudu,starch,"Stiff maize-meal porridge, served as the starch of a plate.",pap maize porridge;mealie pap;stywe pap
+krummelpap,Crumbly pap,phuthu|putu|uphuthu|phutu|krummelpap,starch,"Dry, crumbly maize-meal porridge.",krummelpap;phuthu;putu maize
+soft_porridge,Soft maize porridge,slap pap|slappap|soft pap|mielie meal porridge,starch,"Thin, soft maize-meal porridge, often a breakfast.",soft pap maize porridge;slap pap
+samp_and_beans,Samp and beans,umngqusho|isitambu|samp en bone,starch,Stamped dried maize kernels cooked with beans.,umngqusho;samp and beans
+ting,Ting (sour porridge),ting ya mabele|ting ya bogobe|sour porridge,starch,Fermented (sour) sorghum or maize porridge.,ting sour porridge;ting ya mabele
+yellow_rice,Yellow rice,geelrys|turmeric rice|raisin rice,starch,"Rice cooked with turmeric, often with raisins.",yellow rice raisins turmeric;geelrys
+steamed_bread,Steamed bread,ujeqe|steam bread|stoombrood,bread,Soft bread cooked by steaming.,ujeqe steamed bread;steam bread South Africa
+dombolo,Dombolo (dumpling),dumpling|dumplings|dombolo|dumpling stew,starch,"Steamed dough dumpling, often cooked on top of a stew.",dombolo dumpling;dumplings South Africa
+roti,Roti,rotis|flatbread curry,bread,"Flatbread, eaten with curry.",roti South African curry;roti flatbread curry
+vetkoek,Vetkoek / magwinya,amagwinya|magwinya|fat cake|vetkoek with mince|fatcake,bread,"Deep-fried dough ball, eaten plain or filled (mince, polony, cheese, jam).",vetkoek;amagwinya;magwinya;fat cakes
+roosterkoek,Roosterkoek,grid bread|braai bread,bread,Bread dough cooked on the braai grid over coals.,roosterkoek;roosterbrood braai
+mielie_bread,Mielie bread,mealie bread|mieliebrood|maize bread,bread,Bread made with maize (sweet corn).,mielie bread;mieliebrood;mealie bread
+braaied_mielie,Braaied mielie (roast maize cob),roasted mealie|roast corn|mielie on the braai|street corn,side,Maize cob roasted over coals.,roasted mealies;braaied mielie;mielies braai
+slap_chips,Slap chips,soft chips|vinegar chips|chips|slap chips,side,"Soft, thick chips served with vinegar and salt.",slap chips;slaptjips
+pumpkin_fritters,Pumpkin fritters,pampoenkoekies|pampoenkoekie,side,"Fritters made with cooked pumpkin, usually served with cinnamon sugar.",pampoenkoekies;pumpkin fritters
+sweet_pumpkin,Sweet pumpkin (pampoen),pampoen|spiced pumpkin|cinnamon pumpkin,side,"Cooked pumpkin side dish, often with cinnamon and sugar.",pampoen cinnamon;sweet pumpkin side dish
+morogo,Morogo / imifino (cooked greens),imifino|moroho|wild spinach|cooked greens|spinach and pap,side,Cooked leafy greens (wild or cultivated).,morogo;imifino;cooked wild spinach
+chakalaka,Chakalaka,chakalaka relish|spicy vegetable relish,side,"Spicy vegetable relish, often with baked beans.",chakalaka
+atchar,Atchar,achar|achaar|mango pickle|pickled mango,condiment,"Spiced pickle, often of green mango.",atchar;achar mango pickle South Africa
+amasi,Amasi,maas|sour milk|maas and pap,dairy,Fermented (soured) milk.,amasi fermented milk;maas
+boerewors,Boerewors,wors|boerewors roll|farm sausage|braai wors,meat,"Coarse, spiced sausage, usually coiled.",boerewors;boerewors braai
+braai_meat,Braai meat,braai|braaivleis|braai platter|chops|lamb chops|braaied chicken,meat,"Meat grilled over open coals: chops, steak, chicken pieces, ribs.",braai meat South Africa;braaivleis;braai lamb chops
+sosatie,Sosatie,sosaties|sosatie skewers|kebabs|soutvleis,meat,"Marinated meat skewers, often with dried apricots and onion.",sosaties;sosatie skewers
+potjiekos,Potjiekos,potjie|three-legged pot|stew in a potjie|potjie stew,stew,Stew cooked slowly in a cast-iron three-legged pot over coals.,potjiekos;potjie pot South Africa
+bobotie,Bobotie,bobotie and yellow rice,stew,Spiced minced meat baked under an egg-and-milk topping.,bobotie
+bredie,Bredie,tomato bredie|waterblommetjie bredie|bredie stew|lamb stew,stew,Slow-cooked meat and vegetable stew.,bredie South African stew;tomato bredie;waterblommetjie bredie
+denningvleis,Denningvleis,denning vleis|tamarind lamb,stew,Cape lamb stew made sweet-and-sour with tamarind.,denningvleis
+frikkadelle,Frikkadelle,frikkadel|meatballs|boerekos meatballs,meat,Spiced meatballs.,frikkadelle;frikkadel meatballs
+mogodu,Mogodu / tripe,ulusu|tripe|tripe stew|mogodu and pap,stew,Tripe stew.,mogodu tripe;ulusu tripe
+skop,Skop (smiley),smiley|smileys|sheep head|skaapkop|sheep's head,meat,"Cooked sheep (or goat) head, sold as street food.",smiley sheep head South Africa;skop sheep head
+walkie_talkies,Walkie talkies,chicken heads and feet|chicken feet|runaways,meat,"Chicken heads and feet, grilled or boiled, sold as street food.",walkie talkies chicken feet South Africa;chicken feet street food South Africa
+seswaa,Seswaa,sesswa|chotlho|pounded meat|shredded meat,meat,Boiled meat pounded or shredded until soft.,seswaa
+oxtail_stew,Oxtail stew,oxtail|oxtail potjie|oxtail and pap,stew,Oxtail slowly stewed with vegetables.,oxtail stew South Africa;oxtail potjie
+mutton_curry,Mutton / lamb curry,lamb curry|durban curry|curry|mutton curry and rice,stew,"Mutton or lamb curry, often with potatoes.",mutton curry Durban;lamb curry South Africa
+chicken_curry,Chicken curry,curry chicken|cape malay chicken curry,stew,"Chicken curry, eaten with rice, roti or bread.",chicken curry South Africa;Cape Malay chicken curry
+breyani,Breyani,biryani|briyani|durban biryani|lentil rice,rice,Layered rice and meat (or lentil) dish with spices.,breyani Durban;biryani South Africa
+peri_peri_chicken,Peri-peri chicken,piri piri chicken|peri peri chicken|flame-grilled chicken,meat,Chicken marinated in or served with a chilli (peri-peri) sauce.,peri-peri chicken South Africa;piri-piri chicken
+braaied_snoek,Braaied snoek,snoek|snoek on the braai|snoek and apricot jam,fish,"Snoek (a Cape fish) grilled, often glazed with apricot jam.",snoek braai;braaied snoek;snoek fish Cape Town
+smoorsnoek,Smoorsnoek,smoorvis|snoek stew|smoor snoek,fish,"Flaked snoek stewed with potato, onion and tomato.",smoorsnoek
+pickled_fish,Pickled fish,ingelegde vis|cape malay pickled fish,fish,Fried fish pickled in an onion-and-curry vinegar sauce.,pickled fish Cape Malay;ingelegde vis
+fish_and_chips,Fish and chips,hake and chips|fish & chips|hake,fish,Fried (or grilled) hake with chips.,hake and chips South Africa;fish and chips South Africa
+biltong,Biltong,beef biltong|game biltong|dried meat,snack,"Cured, air-dried strips of meat.",biltong
+droewors,Droëwors,droewors|dry wors|dried sausage,snack,"Dried, air-cured sausage.",droewors;droëwors
+russian_sausage,Russian (sausage),russian|russian and chips|russian roll,meat,"Large smoked sausage, often served in a roll or with chips.",Russian sausage South Africa;russian and chips
+bunny_chow,Bunny chow,bunny|bunnychow|quarter bunny|half bunny,street,Hollowed-out loaf of bread filled with curry.,bunny chow;bunnychow
+kota,Kota / spatlo,spatlo|quarter loaf|kota,street,"Hollowed quarter loaf filled with chips and extras such as polony, egg, cheese, atchar and sausage.",kota Soweto;spatlo;kota quarter loaf
+gatsby,Gatsby,gatsby sandwich|chip roll|masala steak gatsby,street,"Long bread roll packed with chips and a filling, a Cape Town speciality.",gatsby Cape Town sandwich;gatsby sandwich
+braaibroodjie,Braaibroodjie,braai sandwich|toasted braai sandwich|braaibroodjies,street,"Toasted sandwich of tomato, onion and cheese cooked on the braai.",braaibroodjie;braaibroodjies
+samoosa,Samoosa,samosa|samoosas|samosas|mince samoosa,snack,Fried triangular pastry with a savoury filling.,samoosa South Africa;samosa Durban
+melktert,Melktert,milk tart|melktert slice,dessert,"Pastry case filled with a set milk custard, dusted with cinnamon.",melktert;milk tart South Africa
+koeksister,"Koeksister (Afrikaner, plaited)",koeksisters|koeksuster|plaited koeksister,dessert,Plaited fried dough soaked in cold syrup.,koeksister;koeksisters South Africa
+koesister,Koesister (Cape Malay),koesisters|cape malay koesister|koe'sister,dessert,"Spiced, oval fried dough rolled in coconut.",koesister Cape Malay;koesisters coconut
+malva_pudding,Malva pudding,malva|malva pudding and custard,dessert,"Spongy baked pudding with apricot jam, soaked in a hot cream sauce.",malva pudding
+peppermint_crisp_tart,Peppermint crisp tart,peppermint crisp|tennis biscuit tart|fridge tart,dessert,"No-bake tart of biscuits, caramel and cream topped with chocolate.",peppermint crisp tart
+hertzoggie,Hertzoggie,hertzoggies|hertzog cookies|jam and coconut tartlets,dessert,Small tartlet with jam and coconut meringue.,hertzoggies;hertzoggie cookies
+rusks,Rusks,beskuit|buttermilk rusks|ouma rusks|rusk,bakery,"Twice-baked, dry biscuit-like bread eaten dunked in tea or coffee.",South African rusks;beskuit
+pannekoek,Pannekoek,pancakes|cinnamon sugar pancakes|pannekoek with cinnamon,dessert,"Thin pancakes, often rolled with cinnamon sugar.",pannekoek South Africa;pannekoek cinnamon sugar
