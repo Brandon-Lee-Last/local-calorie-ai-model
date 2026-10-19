@@ -75,6 +75,7 @@ src/calorie_model/
   sa_foods.py       South African dish list + per-100 g sheet loader, weighed-plate arithmetic
   prepare_commons.py  openly licensed South African dish photos from Wikimedia Commons (untested live)
   ingest_meals.py   weighed phone photos of meals -> training folder (--extra-data)
+  ingest_folder.py  folders of dish photos you collected -> training folder, no nutrition labels (de-duplicated)
   check_photos.py   run a checkpoint on your own photos exactly as the app will
   evaluate_checkpoint.py  accuracy AND consistency (same dish, different angles), plain vs averaged
   data.py           cached-dataset loader (train/val/test), augmentations, synthetic data

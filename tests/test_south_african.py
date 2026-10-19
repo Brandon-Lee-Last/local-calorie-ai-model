@@ -374,3 +374,69 @@ def test_holdout_data_is_scored_with_a_median_guess_and_never_trained_on(tmp_pat
 
     with pytest.raises(SystemExit):
         train_main([*common, "--extra-data", str(sa), "--holdout-data", str(sa), "--out", str(tmp_path / "both")])
+
+
+def test_download_reports_only_the_dishes_asked_for_and_rejects_unknown_ones(tmp_path, taxonomy):
+    tax_path, _ = taxonomy
+    results = {"pap maize porridge": [commons_page(1, 1, "CC BY 4.0", sha="s1")]}
+    fetch, fetch_file, calls = fake_commons(tmp_path, results)
+    assert pc.download(tmp_path / "c", tax_path, fetch, fetch_file, only={"pap"}) == {"pap": 1}
+    assert "boerewors" not in calls["search"]  # the other dishes were not searched at all
+    with pytest.raises(ValueError, match="unknown dish id.*bunny_chow"):
+        pc.download(tmp_path / "c2", tax_path, fetch, fetch_file, only={"bunny_chow"})
+
+
+# --- folders of photos you collected yourself ----------------------------------------------------------------
+
+
+def pattern(kind, size=300):
+    im = Image.new("RGB", (size, size), (0, 0, 0))
+    white = (255, 255, 255)
+    if kind == "left":
+        im.paste(white, (0, 0, size // 2, size))
+    elif kind == "top":
+        im.paste(white, (0, 0, size, size // 2))
+    else:  # diagonal split
+        for y in range(size):
+            im.paste(white, (0, y, y, y + 1))
+    return im
+
+
+def test_ingest_folder_cleans_dedupes_and_labels_by_folder(tmp_path, taxonomy):
+    from calorie_model import ingest_folder as inf
+
+    tax_path, _ = taxonomy
+    src = tmp_path / "dl"
+    (src / "pap").mkdir(parents=True)
+    (src / "Wors").mkdir()  # an alias of boerewors
+    pattern("left").save(src / "pap" / "a.jpg")
+    pattern("left").resize((200, 200)).save(src / "pap" / "a_small.jpg")  # same picture, re-saved smaller
+    pattern("top").save(src / "pap" / "b.jpg")
+    (src / "pap" / "b_copy.jpg").write_bytes((src / "pap" / "b.jpg").read_bytes())  # exact copy
+    pattern("top", 50).save(src / "pap" / "tiny.jpg")
+    (src / "pap" / "broken.jpg").write_bytes(b"this is not an image")
+    pattern("diagonal").save(src / "Wors" / "d.png")
+
+    out = tmp_path / "web"
+    stats = inf.ingest(src, out, tax_path, source="web-unlicensed", test_fraction=0.5)
+    assert (stats["photos"], stats["duplicates"], stats["too_small"], stats["unreadable"], stats["dishes"]) == (3, 2, 1, 1, 2)
+    with open(out / "index.csv", newline="") as f:
+        rows = list(csv.DictReader(f))
+    assert sorted(r["dish_id"] for r in rows) == ["boerewors", "pap", "pap"] and {r["source"] for r in rows} == {"web-unlicensed"}
+    for r in rows:
+        with Image.open(out / r["path"]) as im:
+            assert im.format == "JPEG" and not im.getexif()
+    ExtraNutritionDataset(out, "train", img_size=IMG)  # loads as an --extra-data source, with no nutrition labels
+
+
+def test_ingest_folder_stops_on_an_unknown_folder_before_writing_anything(tmp_path, taxonomy):
+    from calorie_model import ingest_folder as inf
+
+    tax_path, _ = taxonomy
+    src = tmp_path / "dl"
+    (src / "pap").mkdir(parents=True)
+    (src / "boerwors").mkdir()
+    pattern("left").save(src / "pap" / "a.jpg")
+    with pytest.raises(ValueError, match="boerwors.*did you mean boerewors"):
+        inf.ingest(src, tmp_path / "web", tax_path)
+    assert not (tmp_path / "web").exists()

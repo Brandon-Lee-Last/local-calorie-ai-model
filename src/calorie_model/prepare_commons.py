@@ -185,6 +185,8 @@ def download(
     only: set[str] | None = None,
 ) -> dict[str, int]:
     taxonomy = read_taxonomy(taxonomy_path)
+    if only and (unknown := sorted(only - set(taxonomy))):
+        raise ValueError(f"unknown dish id(s) {', '.join(unknown)}; see the dish_id column of {taxonomy_path}")
     out.mkdir(parents=True, exist_ok=True)
     log = out / "attribution.csv"
     known = _read_attribution(log)
@@ -214,7 +216,7 @@ def download(
                            "licence": c.licence, "licence_url": c.licence_url, "sha1": c.sha1, "query": term}
                     writer.writerow(row)
                     f.flush()
-    return counts
+    return {d: n for d, n in counts.items() if not only or d in only}  # just the dishes that were searched
 
 
 def _read_attribution(path: Path) -> dict[str, dict[str, str]]:
@@ -270,7 +272,11 @@ def main(argv: list[str] | None = None) -> None:
                           args.per_dish, args.per_query, args.allow_sharealike, args.min_side, set(args.dish) if args.dish else None)
         for dish_id, n in sorted(counts.items(), key=lambda kv: kv[1]):
             print(f"{dish_id:24s} {n:3d}")
+        short = sum(n < args.per_dish for n in counts.values())
         print(f"{sum(counts.values())} photos under {args.out / 'img'}; review them, then run the index step")
+        if short:
+            print(f"{short} of {len(counts)} dishes got fewer than {args.per_dish}: Commons has few files under an accepted licence "
+                  f"for their search terms{'' if args.allow_sharealike else ' (most Commons photos are CC BY-SA: see --allow-sharealike)'}")
     else:
         per_dish = build_index(args.out, args.test_fraction)
         print(f"{args.out / 'index.csv'}: {sum(per_dish.values())} photos, {len(per_dish)} dishes")

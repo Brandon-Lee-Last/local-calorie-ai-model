@@ -82,6 +82,36 @@ left out unless you pass `--allow-sharealike`; whether share-alike reaches a tra
 unsettled, so ask someone qualified before turning it on. NonCommercial and NoDerivatives photos are never kept.
 A photographer's pictures are all on the same side of the train/test split.
 
+**More photos from Commons:** most Commons photos are CC BY-SA, which the default leaves out, so the first
+live run found only 4 usable bunny chow photos. `--allow-sharealike` is the biggest single increase in yield;
+`--per-dish` and `--per-query` raise the cap, and more search terms in `commons_queries` widen the net. The
+run prints how many dishes fell short.
+
+#### Photos you collect yourself, including ones with no licence
+
+`ingest_folder` takes folders of photos you gathered by any means, one sub-folder per dish:
+
+```powershell
+python -m calorie_model.ingest_folder --src my_downloads --out data/sa_web --source web-unlicensed
+```
+
+It strips metadata, makes photos upright, drops exact and near-duplicate copies, and writes the same kind of
+folder as the Commons step. It does not download anything. I did not build a Google/Bing image scraper: I cannot
+test one from here, they break often and go against those sites' terms, and it would not address the real
+shortfall (below).
+
+Two things to decide with your eyes open:
+
+- **"Private use" ends when the model ships.** Weights trained on a photo travel inside the APK that other
+  people install. Whether that is allowed for photos with no licence is a copyright question I cannot answer for
+  South Africa; ask someone qualified before the app is distributed. So keep unlicensed photos in their own
+  folder (`data/sa_web`, never mixed into `sa_commons`) and keep them out of the `--extra-data` list for any model
+  you plan to release. Nothing else is needed to retrain without them.
+- **More unlabelled dish photos will not fix the accuracy problem.** They teach the model what each dish looks
+  like (food / not-food, and later dish recognition). Calories come from weighed plates; the model's error on
+  portion size is where it is weakest, and no number of web photos has a weight attached. The 200-500 weighed
+  meals in step 3 still decide how good it is.
+
 ### 3. Weighed meals (this is the part that matters)
 
 You need a kitchen scale (1 g steps), the phone you will use, and plates of real South African food: home
