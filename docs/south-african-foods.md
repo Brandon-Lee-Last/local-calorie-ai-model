@@ -112,6 +112,20 @@ Two things to decide with your eyes open:
   portion size is where it is weakest, and no number of web photos has a weight attached. The 200-500 weighed
   meals in step 3 still decide how good it is.
 
+### Packaged foods: juices, sweets, chocolate, biscuits (Open Food Facts)
+
+```powershell
+python -m calorie_model.prepare_off --out data/off_za --contact you@example.com
+python -m calorie_model.prepare_off --out data/off_za --contact you@example.com --images 2000   # also front-of-pack photos
+```
+
+Streams Open Food Facts' full export (several GB, nothing big saved) and writes `data/off_za/products.csv`: barcode, name, brand,
+a group (juice, soft drink, sweets, chocolate, biscuits, snacks, cereal, meal, ...), nutrition per 100 g, serving size, photo link and the page
+to credit. This is the lawful way to get South African packaged foods with macros. The app already looks barcodes up in the same database
+at run time, so this list is for browsing, filling `nutrition_per_100g.csv` with sourced values, and checking how many South African
+products it holds. It is **pack photos**, which cannot teach the plate model how big a portion is, so it is not in the calorie
+training format. Credit: data under ODbL, photos CC BY-SA; check what that means for a commercial product.
+
 ### 3. Weighed meals (this is the part that matters)
 
 You need a kitchen scale (1 g steps), the phone you will use, and plates of real South African food: home
