@@ -7,7 +7,7 @@
 
 ## The model file
 
-`models/nutrition_v0.tflite` (4.45 MB) with `models/MODEL_CARD.md` (contract, training, accuracy,
+`models/nutrition_v1.tflite` (4.42 MB) with `models/MODEL_CARD.md` (contract, training, accuracy,
 limits) and `models/golden/` (a photo plus its expected output). Copy the `.tflite` into your Expo
 app's assets. First thing to do in the app: run the golden photo through the model and confirm it
 returns the values in `golden/example_expected.json`. That checks loading, tensor layout and output
@@ -17,13 +17,13 @@ order before you try any real photo.
 
 Checked by converting a checkpoint with `export_tflite` and inspecting the file
 with the LiteRT interpreter on a desktop CPU: input `[1, 224, 224, 3]` `uint8`,
-output `[1, 5]` `float32`, 4.45 MB (fp32). Not yet run on a phone. Index the
+output `[1, 6]` `float32`, 4.42 MB (fp32). Not yet run on a phone. Index the
 tensors by position, since their auto-generated names are not meaningful.
 
 | | |
 |---|---|
 | Input `image` | `uint8`, shape `[1, 224, 224, 3]`, RGB, NHWC, raw 0-255 pixels |
-| Output `nutrition` | `float32`, shape `[1, 5]` = `[calories kcal, mass g, fat g, carb g, protein g]` |
+| Output `nutrition` | `float32`, shape `[1, 6]` = `[calories kcal, mass g, fat g, carb g, protein g, food]`, where `food` is the probability (0-1) that the photo shows food; ignore the first five when it is low (older v0 files have only the first five) |
 
 Do **not** scale to [0, 1] or normalise in the app; the graph does it. The input
 size comes from the checkpoint (`img_size`, default 224); the TFLite export fixes
@@ -53,10 +53,10 @@ native module, so I expect Expo Go cannot load it (its README does not say).
 import { loadTensorflowModel } from 'react-native-fast-tflite';
 
 // delegates is a required ARRAY: [] = plain CPU, ['android-gpu'] = GPU.
-const model = await loadTensorflowModel(require('./assets/nutrition_v0.tflite'), []);
+const model = await loadTensorflowModel(require('./assets/nutrition_v1.tflite'), []);
 // rgb: Uint8Array of length 224 * 224 * 3, RGB interleaved. Pass its ArrayBuffer (exactly that size).
 const [out] = await model.run([rgb.buffer]);          // run(input: ArrayBuffer[]): Promise<ArrayBuffer[]>
-const [calories, mass, fat, carb, protein] = new Float32Array(out!);
+const [calories, mass, fat, carb, protein, food] = new Float32Array(out!);   // food: probability 0-1 that it is food
 ```
 
 `model.inputs` and `model.outputs` report each tensor's name, data type and shape, which the app uses to

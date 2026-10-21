@@ -8,10 +8,10 @@ Target: **Android**, inside a **React Native / Expo** app (see
 [docs/android-expo.md](docs/android-expo.md)).
 
 > Status: first real results exist (see **Results so far**). On the official Nutrition5k
-> test dishes the model's calorie error is roughly 60-70% lower than always guessing
-> the median. A trained model is exported as `models/nutrition_v0.tflite` (4.45 MB, see its model
-> card); it matches PyTorch to under 0.001 kcal/g on 260 real photos on a desktop CPU. Nothing has
-> been run on a phone, and none of this is tested on phone photos.
+> test dishes the model's calorie error is roughly 60% lower than always guessing the median. The shipped
+> model is `models/nutrition_v1.tflite` (4.42 MB, see its model card): the five nutrition outputs plus a
+> food / not-food probability, matching PyTorch to under 0.001 on a desktop CPU. It has never seen South
+> African food, nothing has been run on a phone, and none of this is tested on phone photos.
 
 ## Approach (v0)
 
@@ -199,15 +199,15 @@ which were never in training. Accepted as food if the probability is at least 0.
   about 77.3). Roughly 5% worse, mostly on the rig's side frames. One run, so part may be noise.
 - Not yet tested on phone photos. That is the test that matters; use `check_photos`.
 
-## Known gap: it will "estimate" anything
+## Known gap: it will "estimate" anything (fixed in v1, unmeasured on a phone)
 
-The first model (v0) was trained only on food, so a photo of a dog still gets five confident-looking
-numbers (a real phone test returned about 200 kcal). The code now has a food / not-food output to fix this:
-a sixth output, the probability the photo shows food, trained on Nutrition5k plus about 22,000 Open Images
-photos (real-world food, and non-food including dogs, cats and people). The app shows "this doesn't look
-like food" when it is low. A first full-size run worked (see "Food / not-food results" below); the model
-is not yet converted and shipped in the app, so until it is, the app still has no way to refuse a non-food
-photo. See `docs/train-on-pc.md` ("Teaching the model what is NOT food").
+v0 was trained only on food, so a photo of a dog still got five confident-looking numbers (a real phone test
+returned about 200 kcal). v1 adds a sixth output, the probability the photo shows food, trained on
+Nutrition5k plus about 22,000 Open Images photos (real-world food, and non-food including dogs, cats and
+people). On 3,000 held-out Open Images photos it rejected 98.8% of dogs and cats and 98.2% of people, and
+accepted 91.5% of real food (see "Food / not-food results"). `models/nutrition_v1.tflite` is that model; the
+app shows "this doesn't look like food" when the probability is low. What a phone photo of your own dog
+does has to be checked with `check_photos` or the app.
 
 ## South African food
 

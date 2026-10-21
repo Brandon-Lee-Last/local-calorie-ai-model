@@ -24,7 +24,7 @@ import torch
 from torch import nn
 
 from .data import load_rgb_uint8
-from .model import TARGETS, NutritionNet, scale_vector
+from .model import OUTPUT_NAMES, TARGETS, NutritionNet, scale_vector
 
 
 class DeployModel(nn.Module):
@@ -175,7 +175,7 @@ def main(argv: list[str] | None = None) -> None:
     export_onnx(net, img_size, args.out, tta=args.tta)
     diff = check_parity(net, args.out, img_size, tta=args.tta)
     print(f"{args.out}: {args.out.stat().st_size / 1e6:.2f} MB, max |torch - onnx| = {diff:.2e}")
-    print("outputs:", ", ".join(TARGETS))
+    print("outputs:", ", ".join(OUTPUT_NAMES if net.food_head else TARGETS))
 
     if args.quantize:
         q = args.out.with_name(args.out.stem + ".int8.onnx")

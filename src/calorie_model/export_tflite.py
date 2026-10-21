@@ -18,7 +18,7 @@ import torch
 from torch import nn
 
 from .export import deploy_model, load_checkpoint, random_pixels
-from .model import TARGETS
+from .model import OUTPUT_NAMES, TARGETS
 
 
 def export_tflite(model: nn.Module, img_size: int, out: Path, tta: bool = False) -> None:
@@ -72,7 +72,7 @@ def main(argv: list[str] | None = None) -> None:
     export_tflite(net, img_size, args.out, tta=args.tta)
     diff = check_parity(net, args.out, img_size, tta=args.tta)
     print(f"{args.out}: {args.out.stat().st_size / 1e6:.2f} MB, max |torch - tflite| = {diff:.2e}")
-    print("outputs:", ", ".join(TARGETS))
+    print("outputs:", ", ".join(OUTPUT_NAMES if net.food_head else TARGETS))
 
 
 if __name__ == "__main__":
