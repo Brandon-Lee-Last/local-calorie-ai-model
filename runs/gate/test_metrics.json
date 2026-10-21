@@ -1,0 +1,99 @@
+{
+  "all": {
+    "mae_calories": 77.45905303955078,
+    "mae_mass": 46.00174331665039,
+    "mae_fat": 6.061459541320801,
+    "mae_carb": 7.285757064819336,
+    "mae_protein": 5.372999668121338,
+    "mae_calories_pct": 30.343714356422424,
+    "gate_n": 3110.0,
+    "gate_acc": 1.0,
+    "gate_auc": NaN,
+    "food_recall": 1.0
+  },
+  "baseline_median": {
+    "mae_calories": 185.5597686767578,
+    "mae_mass": 117.74919891357422,
+    "mae_fat": 11.631219863891602,
+    "mae_carb": 13.97904109954834,
+    "mae_protein": 13.737467765808105,
+    "mae_calories_pct": 72.69096970558167
+  },
+  "view_overhead": {
+    "mae_calories": 53.48019790649414,
+    "mae_mass": 35.79601287841797,
+    "mae_fat": 3.863496780395508,
+    "mae_carb": 6.229274272918701,
+    "mae_protein": 5.185641765594482,
+    "mae_calories_pct": 20.93428522348404,
+    "gate_n": 507.0,
+    "gate_acc": 1.0,
+    "gate_auc": NaN,
+    "food_recall": 1.0,
+    "images": 507
+  },
+  "view_side": {
+    "mae_calories": 82.12936401367188,
+    "mae_mass": 47.989540100097656,
+    "mae_fat": 6.489595890045166,
+    "mae_carb": 7.4915571212768555,
+    "mae_protein": 5.409324645996094,
+    "mae_calories_pct": 32.17805027961731,
+    "gate_n": 2603.0,
+    "gate_acc": 1.0,
+    "gate_auc": NaN,
+    "food_recall": 1.0,
+    "images": 2603
+  },
+  "gate": {
+    "images": 3000,
+    "overall": {
+      "gate_n": 3000.0,
+      "gate_acc": 0.9483333230018616,
+      "gate_auc": 0.9827550053596497,
+      "food_recall": 0.9150000214576721,
+      "nonfood_rejected": 0.9649999737739563
+    },
+    "sweep": {
+      "0.20": {
+        "food_recall": 0.9269999861717224,
+        "nonfood_rejected": 0.9580000042915344
+      },
+      "0.35": {
+        "food_recall": 0.9190000295639038,
+        "nonfood_rejected": 0.9614999890327454
+      },
+      "0.50": {
+        "food_recall": 0.9150000214576721,
+        "nonfood_rejected": 0.9649999737739563
+      },
+      "0.65": {
+        "food_recall": 0.906000018119812,
+        "nonfood_rejected": 0.9679999947547913
+      },
+      "0.80": {
+        "food_recall": 0.8970000147819519,
+        "nonfood_rejected": 0.9710000157356262
+      }
+    },
+    "groups": {
+      "animal": {
+        "images": 500,
+        "accepted_as_food": 0.012000000104308128
+      },
+      "food": {
+        "images": 1000,
+        "accepted_as_food": 0.9150000214576721
+      },
+      "other": {
+        "images": 1000,
+        "accepted_as_food": 0.054999999701976776
+      },
+      "person": {
+        "images": 500,
+        "accepted_as_food": 0.017999999225139618
+      }
+    },
+    "nutrition5k_test_recognised_as_food": 1.0
+  }
+}
